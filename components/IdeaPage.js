@@ -7,6 +7,7 @@ import {
   User,
   Loader2,
   Clock,
+  ArrowDown,
 } from "lucide-react";
 import { X } from "lucide-react";
 import { config } from "../lib/providers";
@@ -149,7 +150,8 @@ const getIdeaMetadata = async (i) => {
 };
 
 const IdeaPage = ({ id }) => {
-  const [buyAmount, setBuyAmount] = useState(0);
+  const [ethAmount, setEthAmount] = useState("");
+  const [tokenAmount, setTokenAmount] = useState("");
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [buildLink, setBuildLink] = useState("");
@@ -217,8 +219,12 @@ const IdeaPage = ({ id }) => {
     );
   }
 
-  // Calculate token buy total
-  const buyTotal = buyAmount * idea.tokenPrice;
+  // Calculate token amount based on ETH input
+  const handleEthInput = (value) => {
+    setEthAmount(value);
+    // This is a placeholder calculation - replace with actual price calculation
+    setTokenAmount((Number(value) * Number(idea.tokenPrice)).toString());
+  };
 
   return (
     <>
@@ -404,57 +410,70 @@ const IdeaPage = ({ id }) => {
 
         {/* Buy Modal */}
         <div
-          className={`fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 p-6 rounded-xl shadow-xl transform transition-transform duration-300 ${
+          className={`fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
             showBuyModal ? "translate-y-0" : "translate-y-full"
-          } border-2 border-purple-500`}
+          }`}
         >
-          <div className="relative">
+          <div className="relative max-w-md mx-auto">
             <button
               onClick={() => setShowBuyModal(false)}
-              className="absolute top-0 right-0 text-red-500 hover:text-red-700 transition-colors"
+              className="absolute top-0 right-0 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
             >
               <X size={24} />
             </button>
 
-            <h3 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
-              Buy {idea.tokenSymbol} Tokens
+            <h3 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white text-center">
+              Swap ETH for {idea.tokenSymbol}
             </h3>
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Amount of tokens
+            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl mb-4">
+              <label className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2 block">
+                You Pay
               </label>
-              <div className="relative">
+              <div className="flex items-center">
                 <input
                   type="number"
-                  value={buyAmount}
-                  onChange={(e) => setBuyAmount(Number(e.target.value))}
-                  min="0"
-                  step="1"
-                  className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 bg-transparent text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  value={ethAmount}
+                  onChange={(e) => handleEthInput(e.target.value)}
+                  placeholder="0.0"
+                  className="w-full bg-transparent text-2xl font-medium text-gray-900 dark:text-white focus:outline-none"
                 />
+                <div className="flex items-center bg-white dark:bg-gray-600 px-3 py-1 rounded-full">
+                  <span className="font-medium text-gray-900 dark:text-white">
+                    ETH
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="mb-6 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg">
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-600 dark:text-gray-300">
-                  Price per token
-                </span>
-                <span className="text-gray-900 dark:text-gray-100">
-                  ${idea.tokenPrice}
-                </span>
-              </div>
-              <div className="flex justify-between font-medium">
-                <span className="text-gray-800 dark:text-gray-200">Total</span>
-                <span className="text-gray-900 dark:text-gray-100">
-                  ${buyTotal.toFixed(2)}
-                </span>
+            <div className="flex justify-center -my-2">
+              <div className="bg-white dark:bg-gray-700 p-2 rounded-full shadow">
+                <ArrowDown size={20} className="text-gray-600 dark:text-gray-300" />
               </div>
             </div>
 
-            <button className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white py-3 rounded-lg font-medium transition-all flex items-center justify-center">
-              <DollarSign size={18} className="mr-2" /> Buy Tokens
+            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl mt-2">
+              <label className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2 block">
+                You Receive
+              </label>
+              <div className="flex items-center">
+                <input
+                  type="text"
+                  value={tokenAmount}
+                  readOnly
+                  className="w-full bg-transparent text-2xl font-medium text-gray-900 dark:text-white focus:outline-none"
+                  placeholder="0.0"
+                />
+                <div className="flex items-center bg-white dark:bg-gray-600 px-3 py-1 rounded-full">
+                  <span className="font-medium text-gray-900 dark:text-white">
+                    {idea.tokenSymbol}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-medium mt-6 transition-colors">
+              Swap
             </button>
           </div>
         </div>
