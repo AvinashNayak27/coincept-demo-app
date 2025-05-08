@@ -13,14 +13,374 @@ import { X } from "lucide-react";
 import { config } from "../lib/providers";
 import { coincept_address, coincept_abi, erc20abi } from "../lib/constants";
 import { readContract } from "@wagmi/core";
-
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useWriteContract } from "wagmi";
 import Link from "next/link";
 import { ThumbsUp, ExternalLink } from "lucide-react";
+import { useAccount } from "wagmi";
+import { ethers } from "ethers";
+import { sendTransaction, waitForTransactionReceipt } from "@wagmi/core";
+import { getBalance } from "@wagmi/core";
+import { sdk } from '@farcaster/frame-sdk'
 
-const BuildCard = ({ build, onVote, displayVotes }) => {
+const getUserBalance = async (address,token ) => {
+  console.log("Getting balance for:", address, token);
+  const balance = await getBalance(config, { address: address, token: token });
+  return Number(balance.value) / (10 ** balance.decimals);
+};
+
+const encodePath = (tokenIn, tokenOut, fee) => {
+  return ethers.solidityPacked(
+    ["address", "uint24", "address"],
+    [tokenIn, fee, tokenOut]
+  );
+};
+
+const getQuote = async (token1, amountIn) => {
+  try {
+    const provider = new ethers.JsonRpcProvider(
+      "https://base-mainnet.g.alchemy.com/v2/rgLw9ASxDjV4MABUX8q3jYH8rQg1vYTj"
+    );
+    const quoterContract = new ethers.Contract(
+      "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+      [
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "_factory",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "_WETH9",
+              type: "address",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "constructor",
+        },
+        {
+          inputs: [],
+          name: "WETH9",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "factory",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes",
+              name: "path",
+              type: "bytes",
+            },
+            {
+              internalType: "uint256",
+              name: "amountIn",
+              type: "uint256",
+            },
+          ],
+          name: "quoteExactInput",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "amountOut",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "tokenIn",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "tokenOut",
+              type: "address",
+            },
+            {
+              internalType: "uint24",
+              name: "fee",
+              type: "uint24",
+            },
+            {
+              internalType: "uint256",
+              name: "amountIn",
+              type: "uint256",
+            },
+            {
+              internalType: "uint160",
+              name: "sqrtPriceLimitX96",
+              type: "uint160",
+            },
+          ],
+          name: "quoteExactInputSingle",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "amountOut",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes",
+              name: "path",
+              type: "bytes",
+            },
+            {
+              internalType: "uint256",
+              name: "amountOut",
+              type: "uint256",
+            },
+          ],
+          name: "quoteExactOutput",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "amountIn",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "tokenIn",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "tokenOut",
+              type: "address",
+            },
+            {
+              internalType: "uint24",
+              name: "fee",
+              type: "uint24",
+            },
+            {
+              internalType: "uint256",
+              name: "amountOut",
+              type: "uint256",
+            },
+            {
+              internalType: "uint160",
+              name: "sqrtPriceLimitX96",
+              type: "uint160",
+            },
+          ],
+          name: "quoteExactOutputSingle",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "amountIn",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "int256",
+              name: "amount0Delta",
+              type: "int256",
+            },
+            {
+              internalType: "int256",
+              name: "amount1Delta",
+              type: "int256",
+            },
+            {
+              internalType: "bytes",
+              name: "path",
+              type: "bytes",
+            },
+          ],
+          name: "uniswapV3SwapCallback",
+          outputs: [],
+          stateMutability: "view",
+          type: "function",
+        },
+      ],
+      provider
+    );
+
+    const amountInWei = ethers.parseUnits(amountIn.toFixed(18), 18);
+    const token0 = "0x4200000000000000000000000000000000000006";
+    const fee = 10000;
+
+    const path = encodePath(token0, token1, fee);
+    const quotedAmountOut = await quoterContract.quoteExactInput.staticCall(
+      path,
+      amountInWei
+    );
+    return quotedAmountOut;
+  } catch (err) {
+    console.error("Quote error:", err);
+    return "0";
+  }
+};
+
+const createSwapCalldata = async (token1, amountIn, address) => {
+  try {
+    const provider = new ethers.JsonRpcProvider(
+      "https://base-mainnet.g.alchemy.com/v2/rgLw9ASxDjV4MABUX8q3jYH8rQg1vYTj"
+    );
+    const ROUTER_ABI = [
+      "function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)",
+      "function exactOutputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountOut, uint256 amountInMaximum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountIn)",
+    ];
+    const router = new ethers.Contract(
+      "0x2626664c2603336E57B271c5C0b26F421741e481",
+      ROUTER_ABI,
+      provider
+    );
+    const amountInWei = ethers.parseUnits(amountIn.toFixed(18), 18);
+
+    const params = {
+      tokenIn: "0x4200000000000000000000000000000000000006",
+      tokenOut: token1,
+      fee: 10000,
+      recipient: address,
+      amountIn: amountInWei,
+      amountOutMinimum: 0, // Add slippage calculation here if needed
+      sqrtPriceLimitX96: 0,
+    };
+
+    const calldata = router.interface.encodeFunctionData("exactInputSingle", [
+      params,
+    ]);
+
+    return {
+      calldata,
+      value: amountInWei.toString(),
+      expectedOutput: "0",
+      minOutput: "0",
+    };
+  } catch (err) {
+    console.error("Swap error:", err);
+    throw err;
+  }
+};
+
+const getVotingPower = async (address, tokenAddress) => {
+  const votingPower = await readContract(config, {
+    abi: erc20abi,
+    address: tokenAddress,
+    functionName: "getVotes",
+    args: [address],
+  });
+  return votingPower;
+};
+const hasUserVoted = async (address, contestId) => {
+  const hasVoted = await readContract(config, {
+    abi: coincept_abi,
+    address: coincept_address,
+    functionName: "hasVoted",
+    args: [contestId, address],
+  });
+  return hasVoted;
+};
+
+const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
   const [ogData, setOgData] = useState({});
+  const { address } = useAccount();
+  const [votingPower, setVotingPower] = useState(0);
+  const {
+    data: delegateHash,
+    isPending: delegatePending,
+    writeContractAsync: delegateWriteContract,
+  } = useWriteContract();
+  const {
+    data: voteHash,
+    isPending: votePending,
+    writeContractAsync: voteWriteContract,
+  } = useWriteContract();
+  const [hasVoted, setHasVoted] = useState(false);
+
+  useEffect(() => {
+    const fetchVotingPower = async () => {
+      if (address && voteToken) {
+        try {
+          const power = await getVotingPower(address, voteToken);
+          const Voted = await hasUserVoted(address, contestId);
+          setHasVoted(Voted);
+          if (Voted) {
+            setVotingPower(Number(power) / 1e18);
+          } else {
+            setVotingPower(0);
+          }
+        } catch (error) {
+          console.error("Error fetching voting power:", error);
+          setVotingPower(0);
+        }
+      }
+    };
+
+    fetchVotingPower();
+  }, [address, voteToken, delegateHash, voteHash]); // Re-fetch when delegation or votes change
+
+  // Handle voting
+  const handleVote = async () => {
+    try {
+      if (!address) {
+        throw new Error("Please connect your wallet first");
+      }
+
+      if (votingPower <= 0) {
+        await delegateWriteContract({
+          address: voteToken,
+          abi: erc20abi,
+          functionName: "delegate",
+          args: [address],
+        });
+      }
+
+      await voteWriteContract({
+        address: coincept_address,
+        abi: coincept_abi,
+        functionName: "vote",
+        args: [Number(contestId), buildId],
+      });
+    } catch (error) {
+      console.error("Error voting:", error);
+      // Here you could add user feedback about the error
+    }
+  };
 
   useEffect(() => {
     const fetchOGData = async () => {
@@ -84,7 +444,7 @@ const BuildCard = ({ build, onVote, displayVotes }) => {
           {build.description || ogData.description}
         </p>
 
-        <div className="flex flex-wrap gap-2 mb-4">
+        <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
           {build.buildLink && (
             <a
               href={build.buildLink}
@@ -95,22 +455,60 @@ const BuildCard = ({ build, onVote, displayVotes }) => {
               <ExternalLink size={12} className="mr-1" /> Project
             </a>
           )}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {build.author.substring(0, 6)}...{build.author.substring(38)}
+            </span>
+            <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded-full">
+              Builder
+            </span>
+          </div>
         </div>
 
         {displayVotes && (
-          <div className="flex justify-between items-center mt-auto">
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              <span className="font-medium text-indigo-600 dark:text-indigo-400">
-                {build.voteCount.toString()}
-              </span>{" "}
-              votes
+          <div className="flex flex-col gap-4 mt-auto p-4 bg-white dark:bg-gray-900 rounded-xl shadow-sm">
+            <div className="flex flex-col gap-2 text-center">
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                Total Votes:
+              </div>
+              <div className="text-xl font-semibold text-indigo-600 dark:text-indigo-400">
+                {build.voteCount.toString() / 1e18}
+              </div>
             </div>
-            <button
-              onClick={() => onVote(build.id)}
-              className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-4 py-2 rounded-lg font-medium flex items-center transition-all hover:shadow-md"
-            >
-              <ThumbsUp size={16} className="mr-2" /> Vote
-            </button>
+
+            <div className="flex flex-col gap-1 text-sm text-gray-500 dark:text-gray-400 text-center">
+              <div>
+                Your voting power:{" "}
+                <span className="font-medium">{votingPower.toString()}</span>
+              </div>
+            </div>
+
+            {hasVoted ? (
+              <div className="flex items-center justify-center gap-2 text-sm text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/50 px-4 py-2 rounded-lg">
+                <ThumbsUp size={16} />
+                You already voted in this contest
+              </div>
+            ) : (
+              <button
+                onClick={handleVote}
+                disabled={delegatePending || votePending}
+                className={`w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-4 py-3 rounded-lg font-medium flex justify-center items-center transition-all hover:shadow-md ${
+                  (delegatePending || votePending) &&
+                  "opacity-50 cursor-not-allowed"
+                }`}
+              >
+                {delegatePending || votePending ? (
+                  <Loader2 size={16} className="mr-2 animate-spin" />
+                ) : (
+                  <ThumbsUp size={16} className="mr-2" />
+                )}
+                {delegatePending
+                  ? "Delegating..."
+                  : votePending
+                  ? "Voting..."
+                  : "Vote"}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -150,7 +548,7 @@ const getIdeaMetadata = async (i) => {
 };
 
 const IdeaPage = ({ id }) => {
-  const [ethAmount, setEthAmount] = useState("");
+  const [ethAmount, setEthAmount] = useState("0.001");
   const [tokenAmount, setTokenAmount] = useState("");
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -158,7 +556,20 @@ const IdeaPage = ({ id }) => {
   const [idea, setIdea] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [votingActive, setVotingActive] = useState(false);
+  const [isQuoting, setIsQuoting] = useState(false);
   const { data: hash, isPending, writeContract } = useWriteContract();
+  const { address } = useAccount();
+  const [userBalance, setUserBalance] = useState(0);
+
+  const [swapping, setSwapping] = useState(false);
+  const [swappingHash, setSwappingHash] = useState(null);
+
+  useEffect(() => {
+    const init = async () => {
+      await sdk.actions.ready();
+    };
+    init();
+  }, []);
 
   useEffect(() => {
     getIdeaMetadata(Number(id)).then((result) => {
@@ -173,6 +584,21 @@ const IdeaPage = ({ id }) => {
       setVotingActive(now >= startTime && now <= endTime);
     });
   }, []);
+
+  useEffect(() => { 
+    if (address && idea) {
+      getUserBalance(address, idea.voteToken).then((balance) => {
+        console.log("User balance:", balance);
+        setUserBalance(balance);
+      });
+    }
+  }, [address, idea]);
+
+  useEffect(() => {
+    if (showBuyModal && idea) {
+      handleEthInput("0.001");
+    }
+  }, [showBuyModal]);
 
   const handleSubmitBuild = async () => {
     try {
@@ -198,15 +624,6 @@ const IdeaPage = ({ id }) => {
     );
   }
 
-  // Handle voting
-  const handleVote = (buildId) => {
-    if (!votingActive) {
-      alert("Voting is not currently active");
-      return;
-    }
-    alert(`Voted for build: ${buildId}`);
-  };
-
   if (!idea) {
     return (
       <div className="container mx-auto px-4 py-16 text-center">
@@ -220,10 +637,17 @@ const IdeaPage = ({ id }) => {
   }
 
   // Calculate token amount based on ETH input
-  const handleEthInput = (value) => {
+  const handleEthInput = async (value) => {
     setEthAmount(value);
-    // This is a placeholder calculation - replace with actual price calculation
-    setTokenAmount((Number(value) * Number(idea.tokenPrice)).toString());
+    setIsQuoting(true);
+    try {
+      const quote = await getQuote(idea.voteToken, Number(value));
+      setTokenAmount(ethers.formatUnits(quote, 18));
+    } catch (error) {
+      console.error("Error getting quote:", error);
+      setTokenAmount("0");
+    }
+    setIsQuoting(false);
   };
 
   return (
@@ -265,7 +689,9 @@ const IdeaPage = ({ id }) => {
                     </h1>
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={() => setShowBuyModal(true)}
+                        onClick={async () => {
+                          setShowBuyModal(true);
+                        }}
                         className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium transition-colors"
                       >
                         Buy ${idea.tokenSymbol}
@@ -273,24 +699,30 @@ const IdeaPage = ({ id }) => {
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-4 mb-6 text-sm">
-                    <div className="flex items-center text-gray-600 dark:text-gray-300">
-                      <User size={16} className="mr-1" />
-                      Creator: {idea.creator.substring(0, 6)}...
-                      {idea.creator.substring(38)}
-                    </div>
-                    <div className="flex items-center text-gray-600 dark:text-gray-300">
-                      <Coins size={16} className="mr-1" />
-                      <span
-                        onClick={(e) => {
-                          e.preventDefault();
-                          navigator.clipboard.writeText(idea.voteToken);
-                        }}
-                        className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400"
-                      >
-                        Token: {idea.tokenSymbol}
-                      </span>
-                    </div>
+                    <div className="flex flex-wrap gap-4 mb-6 text-sm">
+                      <div className="flex items-center text-gray-600 dark:text-gray-300">
+                        <User size={16} className="mr-1" />
+                        Creator: {idea.creator.substring(0, 6)}...
+                        {idea.creator.substring(38)}
+                      </div>
+                      <div className="flex items-center text-gray-600 dark:text-gray-300">
+                        <Coins size={16} className="mr-1" />
+                        <span
+                          onClick={(e) => {
+                            e.preventDefault();
+                            navigator.clipboard.writeText(idea.voteToken);
+                          }}
+                          className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400"
+                        >
+                          Token: {idea.tokenSymbol}
+                        </span>
+                      </div>
+                      <div className="flex items-center text-gray-600 dark:text-gray-300">
+                        <Coins size={16} className="mr-1" />
+                        <span>
+                          Balance: {userBalance.toFixed(4)} {idea.tokenSymbol}
+                        </span>
+                      </div>
                     <div className="flex items-center text-gray-600 dark:text-gray-300">
                       <Clock size={16} className="mr-1" />
                       <span className="hidden md:inline">
@@ -385,8 +817,10 @@ const IdeaPage = ({ id }) => {
                       <BuildCard
                         key={`${build.buildLink}-${index}`}
                         build={build}
-                        onVote={handleVote}
                         displayVotes={votingActive}
+                        contestId={id}
+                        voteToken={idea.voteToken}
+                        buildId={index}
                       />
                     ))}
                   </div>
@@ -423,7 +857,7 @@ const IdeaPage = ({ id }) => {
             </button>
 
             <h3 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white text-center">
-              Swap ETH for {idea.tokenSymbol}
+              Buy {idea.tokenSymbol}
             </h3>
 
             <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl mb-4">
@@ -446,34 +880,74 @@ const IdeaPage = ({ id }) => {
               </div>
             </div>
 
-            <div className="flex justify-center -my-2">
-              <div className="bg-white dark:bg-gray-700 p-2 rounded-full shadow">
-                <ArrowDown size={20} className="text-gray-600 dark:text-gray-300" />
-              </div>
+            <div className="grid grid-cols-3 gap-2 mb-6">
+              <button
+                onClick={() => handleEthInput("0.001")}
+                className="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-600 text-center transition-all"
+              >
+                <span className="text-sm font-medium text-gray-900 dark:text-white">0.001</span>
+              </button>
+              <button
+                onClick={() => handleEthInput("0.01")}
+                className="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-600 text-center transition-all"
+              >
+                <span className="text-sm font-medium text-gray-900 dark:text-white">0.01</span>
+              </button>
+              <button
+                onClick={() => handleEthInput("0.1")}
+                className="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-600 text-center transition-all"
+              >
+                <span className="text-sm font-medium text-gray-900 dark:text-white">0.1</span>
+              </button>
             </div>
 
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl mt-2">
+            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl mb-6">
               <label className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2 block">
                 You Receive
               </label>
               <div className="flex items-center">
-                <input
-                  type="text"
-                  value={tokenAmount}
-                  readOnly
-                  className="w-full bg-transparent text-2xl font-medium text-gray-900 dark:text-white focus:outline-none"
-                  placeholder="0.0"
-                />
-                <div className="flex items-center bg-white dark:bg-gray-600 px-3 py-1 rounded-full">
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {idea.tokenSymbol}
-                  </span>
-                </div>
+                {isQuoting ? (
+                  <div className="w-full flex justify-center">
+                    <Loader2 size={24} className="animate-spin text-gray-600 dark:text-gray-300" />
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={tokenAmount}
+                      readOnly
+                      className="w-full bg-transparent text-2xl font-medium text-gray-900 dark:text-white focus:outline-none"
+                      placeholder="0.0"
+                    />
+                    <div className="flex items-center bg-white dark:bg-gray-600 px-3 py-1 rounded-full">
+                      <span className="font-medium text-gray-900 dark:text-white">
+                        {idea.tokenSymbol}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
-            <button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-medium mt-6 transition-colors">
-              Swap
+            <button
+              onClick={async () => {
+                const swapData = await createSwapCalldata(
+                  idea.voteToken,
+                  Number(ethAmount),
+                  address
+                );
+                setSwapping(true);
+                const hash = await sendTransaction(config,{ to: "0x2626664c2603336E57B271c5C0b26F421741e481", value: swapData.value, data: swapData.calldata })
+                const transactionReceipt = await waitForTransactionReceipt(config, {
+                  hash: hash,
+                });
+                console.log("Transaction receipt:", transactionReceipt);
+                setSwapping(false);
+                setSwappingHash(hash);
+              }}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-medium transition-colors"
+            >
+              {swapping ? "Swapping..." : swappingHash ? "Transaction successful!" : "Buy " + idea.tokenSymbol}
             </button>
           </div>
         </div>

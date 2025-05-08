@@ -7,6 +7,7 @@ import { coincept_abi, coincept_address } from "../lib/constants";
 import { ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { erc20abi } from "../lib/constants";
+import { sdk } from '@farcaster/frame-sdk'
 
 
 const IdeaCard = ({ idea }) => {
@@ -110,6 +111,13 @@ const getIdeas = async () => {
 const IdeasListPage = () => {
   const [ideas, setIdeas] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const init = async () => {
+      await sdk.actions.ready();
+    };
+    init();
+  }, []);
 
   useEffect(() => {
     getIdeas().then((result) => {
