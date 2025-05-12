@@ -21,12 +21,68 @@ import { useAccount } from "wagmi";
 import { ethers } from "ethers";
 import { sendTransaction, waitForTransactionReceipt } from "@wagmi/core";
 import { getBalance } from "@wagmi/core";
-import { sdk } from '@farcaster/frame-sdk'
+import { sdk } from "@farcaster/frame-sdk";
 
-const getUserBalance = async (address,token ) => {
+const getProfile = async (address) => {
+  const options = {
+    method: "GET",
+    headers: {
+      "x-api-key": "2216F242-CC39-4709-95D7-ECD0FA514263",
+      "x-neynar-experimental": "false",
+    },
+  };
+
+  try {
+    const response = await fetch(
+      `https://api.neynar.com/v2/farcaster/user/bulk-by-address?addresses=${address}`,
+      options
+    );
+    const data = await response.json();
+    console.log(data);
+    return data;
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+export const ProfileCard = ({ address }) => {
+  const [profile, setProfile] = useState(null);
+  useEffect(() => {
+    const fetchProfile = async () => {
+      const profiles = await getProfile(address);
+      const addressFromProfile = Object.keys(profiles)[0];
+
+      const profile = profiles[addressFromProfile][0];
+      console.log(profile);
+
+      setProfile(profile);
+    };
+    fetchProfile();
+  }, [address]);
+
+  if (!profile) {
+    return (
+      <div className="w-8 h-8 rounded-full bg-gray-200 animate-pulse" />
+    );
+  }
+
+  return (
+
+      <img
+        src={profile.pfp_url}
+        alt={profile.display_name}
+        className="w-8 h-8 rounded-full"
+        onClick={() => {
+          window.location.href = `/user/${address}`;
+        }}
+      />
+  );
+};
+
+const getUserBalance = async (address, token) => {
   console.log("Getting balance for:", address, token);
   const balance = await getBalance(config, { address: address, token: token });
-  return Number(balance.value) / (10 ** balance.decimals);
+  return Number(balance.value) / 10 ** balance.decimals;
 };
 
 const encodePath = (tokenIn, tokenOut, fee) => {
@@ -316,7 +372,14 @@ const hasUserVoted = async (address, contestId) => {
   return hasVoted;
 };
 
-const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
+const BuildCard = ({
+  build,
+  displayVotes,
+  voteToken,
+  contestId,
+  buildId,
+  refresh,
+}) => {
   const [ogData, setOgData] = useState({});
   const { address } = useAccount();
   const [votingPower, setVotingPower] = useState(0);
@@ -339,7 +402,7 @@ const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
           const power = await getVotingPower(address, voteToken);
           const Voted = await hasUserVoted(address, contestId);
           setHasVoted(Voted);
-          if (Voted) {
+          if (!Voted) {
             setVotingPower(Number(power) / 1e18);
           } else {
             setVotingPower(0);
@@ -352,7 +415,7 @@ const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
     };
 
     fetchVotingPower();
-  }, [address, voteToken, delegateHash, voteHash]); // Re-fetch when delegation or votes change
+  }, [address, voteToken, delegateHash, voteHash, refresh]); // Re-fetch when delegation or votes change
 
   // Handle voting
   const handleVote = async () => {
@@ -417,7 +480,7 @@ const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
   }, [build.buildLink]);
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden flex flex-col h-full">
+    <div className="bg-white rounded-xl shadow-md overflow-hidden flex flex-col h-full">
       <div className="w-full h-40 overflow-hidden">
         {build.imageUrl || ogData.image ? (
           <img
@@ -427,7 +490,7 @@ const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
           />
         ) : (
           <svg
-            className="w-full h-full text-gray-300 dark:text-gray-600"
+            className="w-full h-full text-gray-300"
             fill="currentColor"
             viewBox="0 0 24 24"
           >
@@ -437,10 +500,10 @@ const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
       </div>
 
       <div className="p-5 flex flex-col flex-grow">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">
           {build.title || ogData.title}
         </h3>
-        <p className="text-gray-600 dark:text-gray-300 mb-4 flex-grow line-clamp-3">
+        <p className="text-gray-600 mb-4 flex-grow line-clamp-3">
           {build.description || ogData.description}
         </p>
 
@@ -450,33 +513,31 @@ const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
               href={build.buildLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full flex items-center"
+              className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full flex items-center"
             >
               <ExternalLink size={12} className="mr-1" /> Project
             </a>
           )}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="text-xs text-gray-500">
               {build.author.substring(0, 6)}...{build.author.substring(38)}
             </span>
-            <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded-full">
+            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
               Builder
             </span>
           </div>
         </div>
 
         {displayVotes && (
-          <div className="flex flex-col gap-4 mt-auto p-4 bg-white dark:bg-gray-900 rounded-xl shadow-sm">
+          <div className="flex flex-col gap-4 mt-auto p-4 bg-white rounded-xl shadow-sm">
             <div className="flex flex-col gap-2 text-center">
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                Total Votes:
-              </div>
-              <div className="text-xl font-semibold text-indigo-600 dark:text-indigo-400">
+              <div className="text-sm text-gray-600">Total Votes:</div>
+              <div className="text-xl font-semibold text-indigo-600">
                 {build.voteCount.toString() / 1e18}
               </div>
             </div>
 
-            <div className="flex flex-col gap-1 text-sm text-gray-500 dark:text-gray-400 text-center">
+            <div className="flex flex-col gap-1 text-sm text-gray-500 text-center">
               <div>
                 Your voting power:{" "}
                 <span className="font-medium">{votingPower.toString()}</span>
@@ -484,7 +545,7 @@ const BuildCard = ({ build, displayVotes, voteToken, contestId, buildId }) => {
             </div>
 
             {hasVoted ? (
-              <div className="flex items-center justify-center gap-2 text-sm text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/50 px-4 py-2 rounded-lg">
+              <div className="flex items-center justify-center gap-2 text-sm text-green-600  bg-green-100  px-4 py-2 rounded-lg">
                 <ThumbsUp size={16} />
                 You already voted in this contest
               </div>
@@ -585,14 +646,14 @@ const IdeaPage = ({ id }) => {
     });
   }, []);
 
-  useEffect(() => { 
+  useEffect(() => {
     if (address && idea) {
       getUserBalance(address, idea.voteToken).then((balance) => {
         console.log("User balance:", balance);
         setUserBalance(balance);
       });
     }
-  }, [address, idea]);
+  }, [address, idea, showBuyModal]);
 
   useEffect(() => {
     if (showBuyModal && idea) {
@@ -652,26 +713,30 @@ const IdeaPage = ({ id }) => {
 
   return (
     <>
-      <div className="pt-4  bg-gray-50 dark:bg-gray-900 min-h-screen">
-        <div className="max-w-4xl mx-auto flex justify-between items-center mb-4 px-4">
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white">
-            Coincept
-          </h1>
+      <div className="pt-4  bg-gray-50 min-h-screen">
+        <div
+          style={{
+            display: "none",
+          }}
+        >
           <ConnectButton />
+        </div>
+        <div className="max-w-4xl mx-auto flex justify-between items-center mb-4 px-4">
+          <Link
+            href="/ideas"
+            className="inline-flex items-center text-indigo-600 hover:underline mb-2 mt-2"
+          >
+            <ArrowLeft size={16} className="mr-1" />
+          </Link>
+          <ProfileCard address={address} />
         </div>
         <div className="container mx-auto px-4">
           {/* Back Link */}
-          <Link
-            href="/ideas"
-            className="inline-flex items-center text-indigo-600 dark:text-indigo-400 hover:underline mb-2 mt-2"
-          >
-            <ArrowLeft size={16} className="mr-1" /> Back to ideas
-          </Link>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Idea Details */}
             <div className="lg:col-span-2">
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md overflow-hidden">
+              <div className="bg-white rounded-xl shadow-md overflow-hidden">
                 {idea.voteToken && (
                   <div className="w-full h-48 overflow-hidden">
                     <iframe
@@ -684,7 +749,7 @@ const IdeaPage = ({ id }) => {
 
                 <div className="p-6 md:p-8">
                   <div className="flex flex-wrap justify-between items-start mb-4">
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white mb-2 md:mb-0">
+                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2 md:mb-0">
                       {idea.tokenName}
                     </h1>
                     <div className="flex items-center gap-3">
@@ -699,31 +764,31 @@ const IdeaPage = ({ id }) => {
                     </div>
                   </div>
 
-                    <div className="flex flex-wrap gap-4 mb-6 text-sm">
-                      <div className="flex items-center text-gray-600 dark:text-gray-300">
-                        <User size={16} className="mr-1" />
-                        Creator: {idea.creator.substring(0, 6)}...
-                        {idea.creator.substring(38)}
-                      </div>
-                      <div className="flex items-center text-gray-600 dark:text-gray-300">
-                        <Coins size={16} className="mr-1" />
-                        <span
-                          onClick={(e) => {
-                            e.preventDefault();
-                            navigator.clipboard.writeText(idea.voteToken);
-                          }}
-                          className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400"
-                        >
-                          Token: {idea.tokenSymbol}
-                        </span>
-                      </div>
-                      <div className="flex items-center text-gray-600 dark:text-gray-300">
-                        <Coins size={16} className="mr-1" />
-                        <span>
-                          Balance: {userBalance.toFixed(4)} {idea.tokenSymbol}
-                        </span>
-                      </div>
-                    <div className="flex items-center text-gray-600 dark:text-gray-300">
+                  <div className="flex flex-wrap gap-4 mb-6 text-sm">
+                    <div className="flex items-center text-gray-600">
+                      <User size={16} className="mr-1" />
+                      Creator: {idea.creator.substring(0, 6)}...
+                      {idea.creator.substring(38)}
+                    </div>
+                    <div className="flex items-center text-gray-600">
+                      <Coins size={16} className="mr-1" />
+                      <span
+                        onClick={(e) => {
+                          e.preventDefault();
+                          navigator.clipboard.writeText(idea.voteToken);
+                        }}
+                        className="cursor-pointer hover:text-indigo-600"
+                      >
+                        Token: {idea.tokenSymbol}
+                      </span>
+                    </div>
+                    <div className="flex items-center text-gray-600">
+                      <Coins size={16} className="mr-1" />
+                      <span>
+                        Balance: {userBalance.toFixed(4)} {idea.tokenSymbol}
+                      </span>
+                    </div>
+                    <div className="flex items-center text-gray-600">
                       <Clock size={16} className="mr-1" />
                       <span className="hidden md:inline">
                         Voting:{" "}
@@ -775,16 +840,16 @@ const IdeaPage = ({ id }) => {
                   </div>
 
                   <div className="mb-8">
-                    <h2 className="text-xl font-semibold mb-3 text-gray-900 dark:text-white">
+                    <h2 className="text-xl font-semibold mb-3 text-gray-900">
                       Description
                     </h2>
-                    <p className="text-gray-700 dark:text-gray-300 whitespace-pre-line">
+                    <p className="text-gray-700 whitespace-pre-line">
                       {idea.ideaDescription}
                     </p>
                   </div>
 
                   {!votingActive && (
-                    <div className="bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 p-4 rounded-lg mb-4">
+                    <div className="bg-yellow-100 text-yellow-800 p-4 rounded-lg mb-4">
                       <p>
                         Voting is{" "}
                         {Date.now() / 1000 < Number(idea.votingStartTime)
@@ -800,7 +865,7 @@ const IdeaPage = ({ id }) => {
               {/* Builds Section */}
               <div className="mt-8">
                 <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white whitespace-nowrap">
+                  <h2 className="text-2xl font-bold text-gray-900 whitespace-nowrap">
                     Community Builds
                   </h2>
                   <button
@@ -821,12 +886,13 @@ const IdeaPage = ({ id }) => {
                         contestId={id}
                         voteToken={idea.voteToken}
                         buildId={index}
+                        refresh={showBuyModal}
                       />
                     ))}
                   </div>
                 ) : (
-                  <div className="bg-white dark:bg-gray-800 rounded-xl p-8 text-center">
-                    <p className="text-gray-600 dark:text-gray-300 mb-4">
+                  <div className="bg-white rounded-xl p-8 text-center">
+                    <p className="text-gray-600 mb-4">
                       No builds have been submitted for this idea yet.
                     </p>
                     <button
@@ -844,24 +910,24 @@ const IdeaPage = ({ id }) => {
 
         {/* Buy Modal */}
         <div
-          className={`fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
+          className={`fixed bottom-0 left-0 right-0 bg-white p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
             showBuyModal ? "translate-y-0" : "translate-y-full"
           }`}
         >
           <div className="relative max-w-md mx-auto">
             <button
               onClick={() => setShowBuyModal(false)}
-              className="absolute top-0 right-0 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              className="absolute top-0 right-0 text-gray-500 hover:text-gray-700"
             >
               <X size={24} />
             </button>
 
-            <h3 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white text-center">
+            <h3 className="text-xl font-semibold mb-6 text-gray-900 text-center">
               Buy {idea.tokenSymbol}
             </h3>
 
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl mb-4">
-              <label className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2 block">
+            <div className="bg-gray-50 p-4 rounded-xl mb-4">
+              <label className="text-sm font-medium text-gray-600 mb-2 block">
                 You Pay
               </label>
               <div className="flex items-center">
@@ -870,12 +936,10 @@ const IdeaPage = ({ id }) => {
                   value={ethAmount}
                   onChange={(e) => handleEthInput(e.target.value)}
                   placeholder="0.0"
-                  className="w-full bg-transparent text-2xl font-medium text-gray-900 dark:text-white focus:outline-none"
+                  className="w-full bg-transparent text-2xl font-medium text-gray-900 focus:outline-none"
                 />
-                <div className="flex items-center bg-white dark:bg-gray-600 px-3 py-1 rounded-full">
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    ETH
-                  </span>
+                <div className="flex items-center bg-white px-3 py-1 rounded-full">
+                  <span className="font-medium text-gray-900">ETH</span>
                 </div>
               </div>
             </div>
@@ -883,32 +947,32 @@ const IdeaPage = ({ id }) => {
             <div className="grid grid-cols-3 gap-2 mb-6">
               <button
                 onClick={() => handleEthInput("0.001")}
-                className="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-600 text-center transition-all"
+                className="p-2 rounded-lg border border-gray-200 hover:border-indigo-600 text-center transition-all"
               >
-                <span className="text-sm font-medium text-gray-900 dark:text-white">0.001</span>
+                <span className="text-sm font-medium text-gray-900">0.001</span>
               </button>
               <button
                 onClick={() => handleEthInput("0.01")}
-                className="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-600 text-center transition-all"
+                className="p-2 rounded-lg border border-gray-200 hover:border-indigo-600 text-center transition-all"
               >
-                <span className="text-sm font-medium text-gray-900 dark:text-white">0.01</span>
+                <span className="text-sm font-medium text-gray-900">0.01</span>
               </button>
               <button
                 onClick={() => handleEthInput("0.1")}
-                className="p-2 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-600 text-center transition-all"
+                className="p-2 rounded-lg border border-gray-200 hover:border-indigo-600 text-center transition-all"
               >
-                <span className="text-sm font-medium text-gray-900 dark:text-white">0.1</span>
+                <span className="text-sm font-medium text-gray-900">0.1</span>
               </button>
             </div>
 
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-xl mb-6">
-              <label className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-2 block">
+            <div className="bg-gray-50 p-4 rounded-xl mb-6">
+              <label className="text-sm font-medium text-gray-600 mb-2 block">
                 You Receive
               </label>
               <div className="flex items-center">
                 {isQuoting ? (
                   <div className="w-full flex justify-center">
-                    <Loader2 size={24} className="animate-spin text-gray-600 dark:text-gray-300" />
+                    <Loader2 size={24} className="animate-spin text-gray-600" />
                   </div>
                 ) : (
                   <>
@@ -916,11 +980,11 @@ const IdeaPage = ({ id }) => {
                       type="text"
                       value={tokenAmount}
                       readOnly
-                      className="w-full bg-transparent text-2xl font-medium text-gray-900 dark:text-white focus:outline-none"
+                      className="w-full bg-transparent text-2xl font-medium text-gray-900 focus:outline-none"
                       placeholder="0.0"
                     />
-                    <div className="flex items-center bg-white dark:bg-gray-600 px-3 py-1 rounded-full">
-                      <span className="font-medium text-gray-900 dark:text-white">
+                    <div className="flex items-center bg-white px-3 py-1 rounded-full">
+                      <span className="font-medium text-gray-900">
                         {idea.tokenSymbol}
                       </span>
                     </div>
@@ -937,24 +1001,35 @@ const IdeaPage = ({ id }) => {
                   address
                 );
                 setSwapping(true);
-                const hash = await sendTransaction(config,{ to: "0x2626664c2603336E57B271c5C0b26F421741e481", value: swapData.value, data: swapData.calldata })
-                const transactionReceipt = await waitForTransactionReceipt(config, {
-                  hash: hash,
+                const hash = await sendTransaction(config, {
+                  to: "0x2626664c2603336E57B271c5C0b26F421741e481",
+                  value: swapData.value,
+                  data: swapData.calldata,
                 });
+                const transactionReceipt = await waitForTransactionReceipt(
+                  config,
+                  {
+                    hash: hash,
+                  }
+                );
                 console.log("Transaction receipt:", transactionReceipt);
                 setSwapping(false);
                 setSwappingHash(hash);
               }}
               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-medium transition-colors"
             >
-              {swapping ? "Swapping..." : swappingHash ? "Transaction successful!" : "Buy " + idea.tokenSymbol}
+              {swapping
+                ? "Swapping..."
+                : swappingHash
+                ? "Transaction successful!"
+                : "Buy " + idea.tokenSymbol}
             </button>
           </div>
         </div>
 
         {/* Submit Build Modal */}
         <div
-          className={`fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
+          className={`fixed bottom-0 left-0 right-0 bg-white p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
             showSubmitModal ? "translate-y-0" : "translate-y-full"
           }`}
         >
@@ -966,12 +1041,12 @@ const IdeaPage = ({ id }) => {
               <X size={24} />
             </button>
 
-            <h3 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
+            <h3 className="text-xl font-semibold mb-4 text-gray-900">
               Submit Your Build
             </h3>
 
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 Devfolio Link
               </label>
               <input
@@ -979,7 +1054,7 @@ const IdeaPage = ({ id }) => {
                 value={buildLink}
                 onChange={(e) => setBuildLink(e.target.value)}
                 placeholder="Enter your Devfolio link"
-                className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 bg-transparent text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                className="w-full border border-gray-300 rounded-lg px-4 py-2 bg-transparent text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </div>
 
@@ -990,7 +1065,7 @@ const IdeaPage = ({ id }) => {
               {isPending ? "Submitting..." : "Submit Build"}
             </button>
             {hash && (
-              <div className="mt-4 text-sm text-green-600 dark:text-green-400">
+              <div className="mt-4 text-sm text-green-600 ">
                 Build submitted successfully!
               </div>
             )}

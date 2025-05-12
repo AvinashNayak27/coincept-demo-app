@@ -7,14 +7,16 @@ import { coincept_abi, coincept_address } from "../lib/constants";
 import { ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { erc20abi } from "../lib/constants";
-import { sdk } from '@farcaster/frame-sdk'
-
+import { sdk } from "@farcaster/frame-sdk";
+import { ProfileCard } from "../components/IdeaPage";
+import { useAccount } from "wagmi";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 const IdeaCard = ({ idea }) => {
   return (
     <Link
       href={`/idea/${idea.id}`}
-      className="group bg-white dark:bg-gray-800 rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col h-full"
+      className="group bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col h-full"
     >
       {/* @ts-ignore */}
       {idea.voteToken && (
@@ -29,19 +31,17 @@ const IdeaCard = ({ idea }) => {
       )}
       <div className="p-6 flex flex-col flex-grow">
         <div className="flex justify-between items-start mb-3">
-          <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-            {idea.title}
-          </h3>
+          <h3 className="text-xl font-semibold text-gray-900">{idea.title}</h3>
           {/* <div className="bg-purple-100 dark:bg-purple-900 rounded-full px-3 py-1 text-sm font-medium text-purple-800 dark:text-purple-200 flex items-center">
             <Coins size={14} className="mr-1" />
             ${idea.tokenPrice}
           </div> */}
         </div>
-        <p className="text-gray-600 dark:text-gray-300 mb-4 flex-grow line-clamp-3">
+        <p className="text-gray-600 mb-4 flex-grow line-clamp-3">
           {idea.description}
         </p>
         <div className="mt-auto flex justify-between items-center">
-          <span className="text-sm text-gray-500 dark:text-gray-400">
+          <span className="text-sm text-gray-500">
             <span
               onClick={(e) => {
                 e.preventDefault();
@@ -49,12 +49,12 @@ const IdeaCard = ({ idea }) => {
                 navigator.clipboard.writeText(idea.voteToken);
                 alert("Token copied to clipboard");
               }}
-              className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400"
+              className="cursor-pointer hover:text-indigo-600"
             >
               Token: {idea.tokenSymbol}
             </span>
           </span>
-          <span className="inline-flex items-center text-indigo-600 dark:text-indigo-400 font-medium group-hover:translate-x-1 transition-transform">
+          <span className="inline-flex items-center text-indigo-600 font-medium group-hover:translate-x-1 transition-transform">
             View Details <ArrowUpRight size={16} className="ml-1" />
           </span>
         </div>
@@ -62,7 +62,6 @@ const IdeaCard = ({ idea }) => {
     </Link>
   );
 };
-
 
 const getIdeas = async () => {
   const result = await readContract(config, {
@@ -111,6 +110,7 @@ const getIdeas = async () => {
 const IdeasListPage = () => {
   const [ideas, setIdeas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { address } = useAccount();
 
   useEffect(() => {
     const init = async () => {
@@ -135,16 +135,21 @@ const IdeasListPage = () => {
   }
 
   return (
-    <div className="pt-12 pb-16 bg-gray-50 dark:bg-gray-900 min-h-screen">
+    <div className="pt-4 pb-16 bg-gray-50 min-h-screen">
+      <div style={{ display: "none" }}>
+        <ConnectButton />
+      </div>
       <div className="container mx-auto px-4">
-        <div className="max-w-4xl mx-auto text-center mb-12">
-          <h1 className="text-3xl md:text-4xl font-bold mb-4 text-gray-900 dark:text-white">
-            Coincept
-          </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-300 mb-8">
-            Discover innovative ideas turned into tokens and support the ones
-            you believe in.
-          </p>
+        <div className="flex justify-between items-center max-w-4xl mx-auto mb-8">
+          <Link
+            href="/"
+            className="inline-flex items-center text-indigo-600 hover:underline"
+          >
+            <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
+              Coincept
+            </h1>
+          </Link>
+          <ProfileCard address={address} />
         </div>
 
         {/* Ideas Grid */}
@@ -153,7 +158,7 @@ const IdeasListPage = () => {
             ideas.map((idea) => <IdeaCard key={idea.id} idea={idea} />)
           ) : (
             <div className="col-span-full text-center py-12">
-              <p className="text-lg text-gray-500 dark:text-gray-400">
+              <p className="text-lg text-gray-500">
                 No ideas found matching your search. Try a different keyword.
               </p>
             </div>
