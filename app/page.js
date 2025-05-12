@@ -149,7 +149,7 @@ const IdeasListPage = () => {
               Coincept
             </h1>
           </Link>
-          <ProfileCard address={address} />
+          {address ? <ProfileCard address={address} /> : <ConnectButton />}
         </div>
 
         {/* Ideas Grid */}

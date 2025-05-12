@@ -7,6 +7,8 @@ import { coincept_address, coincept_abi } from "../../../lib/constants";
 import { useState, useEffect } from "react";
 import { config } from "../../../lib/providers";
 import { use } from "react";
+import sdk from "@farcaster/frame-sdk";
+import { useWriteContract } from "wagmi";
 
 const getContest = async (contestId) => {
   const contest = await readContract(config, {
@@ -101,6 +103,42 @@ const UserPage = ({ address }) => {
   const [contests, setContests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("ideas");
+  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
+  const { data: hash, isPending, writeContractAsync } = useWriteContract();
+
+
+  useEffect(() => {
+    if (hash) {
+      alert("Fees claimed successfully");
+    }
+  }, [hash]);
+
+  const handleClaimFees = async (contestId) => {
+    try {
+      const contest = contests.find((c) => c.id === contestId);
+      if (!contest) {
+        throw new Error("Contest not found");
+      }
+
+      await writeContractAsync({
+        address: coincept_address,
+        abi: coincept_abi,
+        functionName: "claimRewards",
+        args: [contestId],
+      });
+    } catch (error) {
+      console.error("Error claiming fees:", error);
+      alert("Error claiming fees");
+    }
+  };
+
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleTabChange = (tab) => {
     setIsLoading(true);
@@ -128,6 +166,19 @@ const UserPage = ({ address }) => {
     );
   }
 
+  const formatTimeLeft = (endTimeBigInt) => {
+    const endTime = Number(endTimeBigInt);
+    const timeLeft = endTime - currentTime;
+    if (timeLeft <= 0) return "Voting ended";
+    
+    const days = Math.floor(timeLeft / 86400);
+    const hours = Math.floor((timeLeft % 86400) / 3600);
+    const minutes = Math.floor((timeLeft % 3600) / 60);
+    
+    return `${days}d ${hours}h ${minutes}m left`;
+  };
+
+
   return (
     <div>
       <div className="border-b border-gray-200 mb-6">
@@ -136,7 +187,7 @@ const UserPage = ({ address }) => {
             onClick={() => handleTabChange("ideas")}
             className={`${
               activeTab === "ideas"
-                ? "border-indigo-500 text-indigo-600"
+                ? "border-orange-500 text-orange-600"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
           >
@@ -146,7 +197,7 @@ const UserPage = ({ address }) => {
             onClick={() => handleTabChange("builds")}
             className={`${
               activeTab === "builds"
-                ? "border-indigo-500 text-indigo-600"
+                ? "border-orange-500 text-orange-600"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
           >
@@ -165,11 +216,16 @@ const UserPage = ({ address }) => {
             {contests.map((contest, index) => (
               <Link href={`/idea/${contest.id}`} key={index}>
                 <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">
+                  <h3 className="text-xl font-semibold mb-2">{contest.fees.token0name === "Wrapped Ether" ? contest.fees.token1name : contest.fees.token0name}</h3>
                   <p className="text-gray-800 text-base mb-4">
                     {contest.ideaDescription}
                   </p>
 
                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
+                    <div className="text-sm text-gray-500 mb-4 sm:mb-0">
+                      {formatTimeLeft(contest.votingEndTime)}
+                    </div>
+
                     {contest.fees &&
                     contest.fees.ideaCurator.fee0.toFixed(5) > 0 ? (
                       <>
@@ -191,18 +247,27 @@ const UserPage = ({ address }) => {
                         </div>
 
                         <button
-                          onClick={(e) => {
+                          onClick={async (e) => {
                             e.preventDefault();
-                            alert("Claim logic goes here");
+                            if (currentTime <= contest.votingEndTime) {
+                              alert(`Voting still active. Please wait ${formatTimeLeft(contest.votingEndTime)}`);
+                            } else {
+                              await handleClaimFees(contest.id);
+                            }
                           }}
-                          className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition"
+                          disabled={isPending}
+                          className={`w-full sm:w-auto ${
+                            currentTime <= contest.votingEndTime 
+                              ? "bg-gray-400 cursor-not-allowed"
+                              : "bg-orange-600 hover:bg-orange-700"
+                          } text-white px-5 py-2.5 rounded-lg text-sm font-medium transition`}
                         >
-                          Claim Fees
+                          {currentTime <= contest.votingEndTime ? "Voting Active" : isPending ? "Claiming..." : "Claim Fees"}
                         </button>
                       </>
                     ) : (
                       <div className="w-full text-sm text-gray-500 border border-gray-300 bg-white rounded-md p-3 text-center italic">
-                        No fees available yet
+                        {currentTime <= contest.votingEndTime ? "Fees not available yet" : "No fees generated"}
                       </div>
                     )}
                   </div>
@@ -242,29 +307,31 @@ const UserPage = ({ address }) => {
                   </span>
                 )}
                 <div className="flex justify-between items-center">
-                  <a
-                    href={contest.build.buildLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center text-indigo-600 hover:text-indigo-800 font-medium text-sm"
+                  <button
+                    onClick={async () => await sdk.actions.openUrl(contest.build.buildLink)}
+                    className="inline-flex items-center text-orange-600 hover:text-orange-800 font-medium text-sm"
                   >
                     View Build <ExternalLink size={14} className="ml-1" />
-                  </a>
+                  </button>
 
                   <Link
                     href={`/idea/${contest.id}`}
-                    className="inline-flex items-center text-indigo-600 hover:text-indigo-800 font-medium text-sm"
+                    className="inline-flex items-center text-orange-600 hover:text-orange-800 font-medium text-sm"
                   >
                     View Idea <ExternalLink size={14} className="ml-1" />
                   </Link>
 
                   <p className="text-sm text-gray-500">
-                    {contest.build?.voteCount || 0} votes
+                    {(Number(contest.build?.voteCount || 0n) / 1e18).toFixed(5)} votes
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mt-4">
+                <div className="text-sm text-gray-500 mb-4 sm:mb-0">
+                  {formatTimeLeft(contest.votingEndTime)}
+                </div>
+
                 {contest.fees && contest.fees.builder.fee0.toFixed(5) > 0 ? (
                   <>
                     <div className="text-sm text-gray-700 space-y-1 mb-4 sm:mb-0">
@@ -285,13 +352,21 @@ const UserPage = ({ address }) => {
                     </div>
 
                     <button
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.preventDefault();
-                        alert("Claim logic goes here");
+                        if (currentTime <= contest.votingEndTime) {
+                          alert(`Voting still active. Please wait ${formatTimeLeft(contest.votingEndTime)}`);
+                        } else {
+                          await handleClaimFees(contest.id);
+                        }
                       }}
-                      className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition"
+                      className={`w-full sm:w-auto ${
+                        currentTime <= contest.votingEndTime 
+                          ? "bg-gray-400 cursor-not-allowed"
+                          : "bg-orange-600 hover:bg-orange-700"
+                      } text-white px-5 py-2.5 rounded-lg text-sm font-medium transition`}
                     >
-                      Claim Fees
+                      {currentTime <= contest.votingEndTime ? "Voting Active" : "Claim Fees"}
                     </button>
                   </>
                 ) : (

@@ -51,16 +51,15 @@ export async function generateMetadata({ params }) {
 
   const frame = {
     version: "next", 
-    imageUrl:
-      "https://coincept.vercel.app/api/token-image?tokenName=" + metadata.tokenName + "&ticker=" + metadata.tokenSymbol + "&creator=" + metadata.creator,
+    imageUrl: "https://coincept.world/coincept.png",
     button: {
       title: "View Coincept",
       action: {
         type: "launch_frame",
-        url: `https://coincept.vercel.app/idea/${id}`,
-        name: "Yoink!",
+        url: `https://coincept.world/idea/${id}`,
+        name: "Coincept",
         splashImageUrl:
-          "https://coincept.vercel.app/globe.svg",
+          "https://coincept.world/globe.svg",
         splashBackgroundColor: "#f5f0ec",
       },
     },
@@ -72,11 +71,8 @@ export async function generateMetadata({ params }) {
     },
   };
 }
-
-export default function IdeaPageHome({ params }) {
-
-
-  const { id } = params;
+export default async function IdeaPageHome({ params }) {
+  const { id } = await params;
 
   return <IdeaPage id={id} />;
 }

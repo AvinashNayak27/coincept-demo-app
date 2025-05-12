@@ -23,6 +23,27 @@ import { sendTransaction, waitForTransactionReceipt } from "@wagmi/core";
 import { getBalance } from "@wagmi/core";
 import { sdk } from "@farcaster/frame-sdk";
 
+const getCastDetails = async (castId) => {
+  const options = {
+    method: "GET",
+    headers: {
+      "x-api-key": "2216F242-CC39-4709-95D7-ECD0FA514263",
+      "x-neynar-experimental": "false",
+    },
+  };
+
+  try {
+    const response = await fetch(
+      `https://api.neynar.com/v2/farcaster/cast?type=hash&identifier=${castId}`,
+      options
+    );
+    const data = await response.json();
+    return data;
+  } catch (err) {
+    console.error(err);
+  }
+};
+
 const getProfile = async (address) => {
   const options = {
     method: "GET",
@@ -45,6 +66,79 @@ const getProfile = async (address) => {
   }
 };
 
+const WarpcastEmbed = ({ cast, votingStartTime, votingEndTime }) => {
+  if (!cast) return null;
+  const author = cast.author;
+  const text = cast.text;
+  const timestamp = new Date(cast.timestamp).toLocaleString("en-US", {
+    hour: "numeric", 
+    minute: "2-digit",
+    hour12: true,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  const now = Date.now() / 1000;
+  let votingStatus;
+  if (now < Number(votingStartTime)) {
+    const timeToStart = Number(votingStartTime) - now;
+    const days = Math.floor(timeToStart / (60 * 60 * 24));
+    const hours = Math.floor((timeToStart % (60 * 60 * 24)) / (60 * 60));
+    const minutes = Math.floor((timeToStart % (60 * 60)) / 60);
+    votingStatus = `Starts in ${days} days ${hours} hours ${minutes} mins`;
+  } else if (now > Number(votingEndTime)) {
+    votingStatus = "Voting ended";
+  } else {
+    const timeLeft = Number(votingEndTime) - now;
+    const days = Math.floor(timeLeft / (60 * 60 * 24));
+    const hours = Math.floor((timeLeft % (60 * 60 * 24)) / (60 * 60));
+    const minutes = Math.floor((timeLeft % (60 * 60)) / 60);
+    votingStatus = `${days} days ${hours} hours ${minutes} mins left`;
+  }
+
+  return (
+    <div className="max-w-md rounded-xl overflow-hidden mt-4 bg-white text-sm font-sans">
+      <div className="p-4 pb-2">
+        <div className="flex items-start gap-3">
+          <img
+            src={author.pfp_url}
+            alt={author.username}
+            className="w-10 h-10 rounded-full object-cover cursor-pointer"
+            onClick={async () => {
+              await sdk.actions.viewProfile({
+                fid: author.fid
+              })
+            }}
+          />
+          <div>
+            <div className="font-semibold">{author.display_name}</div>
+            <div className="text-gray-500 text-xs">@{author.username}</div>
+          </div>
+          <div className="ml-auto">
+            <div 
+              className="w-5 h-5 rounded bg-gray-200 flex items-center justify-center text-gray-500 font-bold cursor-pointer"
+              onClick={async () => {
+                await sdk.actions.openUrl(`https://warpcast.com/${author.username}/${cast.hash.substring(0,10)}`)
+              }}
+            >
+              w
+            </div>
+          </div>
+        </div>
+        <p className="mt-3 text-[15px] leading-snug">{text}</p>
+        <div className="text-gray-400 text-xs mt-2">
+          {timestamp.split(",")[1].trim()} • {timestamp.split(",")[0]}
+        </div>
+      </div>
+      <div className="bg-orange-50 px-4 py-2 text-orange-600 font-semibold text-sm rounded-b-xl">
+        {votingStatus}
+      </div>
+    </div>
+  );
+};
+
+
 export const ProfileCard = ({ address }) => {
   const [profile, setProfile] = useState(null);
   useEffect(() => {
@@ -61,21 +155,18 @@ export const ProfileCard = ({ address }) => {
   }, [address]);
 
   if (!profile) {
-    return (
-      <div className="w-8 h-8 rounded-full bg-gray-200 animate-pulse" />
-    );
+    return <div className="w-8 h-8 rounded-full bg-gray-200 animate-pulse" />;
   }
 
   return (
-
-      <img
-        src={profile.pfp_url}
-        alt={profile.display_name}
-        className="w-8 h-8 rounded-full"
-        onClick={() => {
-          window.location.href = `/user/${address}`;
-        }}
-      />
+    <img
+      src={profile.pfp_url}
+      alt={profile.display_name}
+      className="w-8 h-8 rounded-full"
+      onClick={() => {
+        window.location.href = `/user/${address}`;
+      }}
+    />
   );
 };
 
@@ -363,15 +454,16 @@ const getVotingPower = async (address, tokenAddress) => {
   return votingPower;
 };
 const hasUserVoted = async (address, contestId) => {
-  const hasVoted = await readContract(config, {
+  const VotingInfo = await readContract(config, {
     abi: coincept_abi,
     address: coincept_address,
-    functionName: "hasVoted",
+    functionName: "getVotingInfo",
     args: [contestId, address],
   });
+
+  const hasVoted = VotingInfo.votingPower > 0;
   return hasVoted;
 };
-
 const BuildCard = ({
   build,
   displayVotes,
@@ -387,13 +479,40 @@ const BuildCard = ({
     data: delegateHash,
     isPending: delegatePending,
     writeContractAsync: delegateWriteContract,
+    error: delegateError,
   } = useWriteContract();
   const {
     data: voteHash,
     isPending: votePending,
     writeContractAsync: voteWriteContract,
+    error: voteError,
   } = useWriteContract();
   const [hasVoted, setHasVoted] = useState(false);
+  const [username, setUsername] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+
+  const getUsername = async (address) => {
+    const profiles = await getProfile(address);
+    if (!profiles || Object.keys(profiles).length === 0) {
+      return '';
+    }
+    const addressFromProfile = Object.keys(profiles)[0];
+    const profile = profiles[addressFromProfile][0];
+    return profile?.username || address.substring(0, 6) + "..." + address.substring(38);
+  };
+
+  useEffect(() => {
+    const fetchUsername = async () => {
+      try {
+        const username = await getUsername(build.author);
+        setUsername(username);
+      } catch (error) {
+        console.error('Error fetching username:', error);
+        setUsername('');
+      }
+    };
+    fetchUsername();
+  }, [build.author]);
 
   useEffect(() => {
     const fetchVotingPower = async () => {
@@ -415,13 +534,17 @@ const BuildCard = ({
     };
 
     fetchVotingPower();
-  }, [address, voteToken, delegateHash, voteHash, refresh]); // Re-fetch when delegation or votes change
+  }, [address, voteToken, delegateHash, voteHash, refresh]);
 
-  // Handle voting
   const handleVote = async () => {
     try {
       if (!address) {
         throw new Error("Please connect your wallet first");
+      }
+
+      if (hasVoted) {
+        alert("You have already voted");
+        return;
       }
 
       if (votingPower <= 0) {
@@ -441,14 +564,18 @@ const BuildCard = ({
       });
     } catch (error) {
       console.error("Error voting:", error);
-      // Here you could add user feedback about the error
     }
   };
 
   useEffect(() => {
+    if (delegateError || voteError) {
+      alert("Error voting, please try again");
+    }
+  }, [delegateError, voteError]);
+
+  useEffect(() => {
     const fetchOGData = async () => {
       if (build.buildLink) {
-        console.log("Fetching OG data for:", build.buildLink);
         try {
           const response = await fetch(build.buildLink);
           const text = await response.text();
@@ -470,106 +597,67 @@ const BuildCard = ({
           };
 
           setOgData(ogData);
+          setIsLoading(false);
         } catch (error) {
           console.error("Error fetching OpenGraph data:", error);
+          setIsLoading(false);
         }
+      } else {
+        setIsLoading(false);
       }
     };
 
     fetchOGData();
   }, [build.buildLink]);
 
-  return (
-    <div className="bg-white rounded-xl shadow-md overflow-hidden flex flex-col h-full">
-      <div className="w-full h-40 overflow-hidden">
-        {build.imageUrl || ogData.image ? (
-          <img
-            src={build.imageUrl || ogData.image}
-            alt="Build Image"
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <svg
-            className="w-full h-full text-gray-300"
-            fill="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm0 2v12h16V6H4zm8 3a2 2 0 110 4 2 2 0 010-4zm0 6a4 4 0 110-8 4 4 0 010 8z" />
-          </svg>
-        )}
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl overflow-hidden flex items-center justify-between p-4 shadow-sm w-full max-w-md animate-pulse">
+        <div className="flex flex-col flex-1">
+          <div className="h-5 bg-gray-200 rounded w-3/4 mb-2"></div>
+          <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 bg-gray-200 rounded"></div>
+          {displayVotes && (
+            <div className="w-16 h-6 bg-gray-200 rounded-full"></div>
+          )}
+        </div>
       </div>
+    );
+  }
 
-      <div className="p-5 flex flex-col flex-grow">
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+  return (
+    <div className="bg-white rounded-xl overflow-hidden flex items-center justify-between p-4 shadow-sm w-full max-w-md">
+      <div className="flex flex-col">
+        <h3 className="text-base font-semibold text-gray-900">
           {build.title || ogData.title}
         </h3>
-        <p className="text-gray-600 mb-4 flex-grow line-clamp-3">
-          {build.description || ogData.description}
+        <p className="text-sm text-gray-500">
+          @{username}
         </p>
+      </div>
 
-        <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
-          {build.buildLink && (
-            <a
-              href={build.buildLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full flex items-center"
-            >
-              <ExternalLink size={12} className="mr-1" /> Project
-            </a>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">
-              {build.author.substring(0, 6)}...{build.author.substring(38)}
-            </span>
-            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
-              Builder
-            </span>
-          </div>
-        </div>
+      <div className="flex items-center gap-2">
+        {build.buildLink && (
+          <button
+            onClick={async () => await sdk.actions.openUrl(build.buildLink)}
+            className="text-gray-400 hover:text-gray-600"
+            title="Open Build Link"
+          >
+            <ExternalLink size={16} />
+          </button>
+        )}
 
         {displayVotes && (
-          <div className="flex flex-col gap-4 mt-auto p-4 bg-white rounded-xl shadow-sm">
-            <div className="flex flex-col gap-2 text-center">
-              <div className="text-sm text-gray-600">Total Votes:</div>
-              <div className="text-xl font-semibold text-indigo-600">
-                {build.voteCount.toString() / 1e18}
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1 text-sm text-gray-500 text-center">
-              <div>
-                Your voting power:{" "}
-                <span className="font-medium">{votingPower.toString()}</span>
-              </div>
-            </div>
-
-            {hasVoted ? (
-              <div className="flex items-center justify-center gap-2 text-sm text-green-600  bg-green-100  px-4 py-2 rounded-lg">
-                <ThumbsUp size={16} />
-                You already voted in this contest
-              </div>
-            ) : (
-              <button
-                onClick={handleVote}
-                disabled={delegatePending || votePending}
-                className={`w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-4 py-3 rounded-lg font-medium flex justify-center items-center transition-all hover:shadow-md ${
-                  (delegatePending || votePending) &&
-                  "opacity-50 cursor-not-allowed"
-                }`}
-              >
-                {delegatePending || votePending ? (
-                  <Loader2 size={16} className="mr-2 animate-spin" />
-                ) : (
-                  <ThumbsUp size={16} className="mr-2" />
-                )}
-                {delegatePending
-                  ? "Delegating..."
-                  : votePending
-                  ? "Voting..."
-                  : "Vote"}
-              </button>
-            )}
+          <div 
+            onClick={handleVote}
+            className="bg-green-500 text-white text-sm font-medium px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer hover:bg-green-600"
+          >
+            {(Number(build.voteCount) / 1e18).toFixed(0)}
+            <svg width="13" height="7" viewBox="0 0 13 7" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M7.54058 0.492659C9.18634 1.81739 10.6543 3.36108 11.9062 5.08327C12.0603 5.29253 12.1431 5.5559 12.1218 5.83537C12.0747 6.4549 11.5342 6.9189 10.9147 6.87176C7.97585 6.64811 5.02426 6.64811 2.08542 6.87176C1.46589 6.9189 0.925444 6.4549 0.878297 5.83537C0.85703 5.55591 0.939772 5.29254 1.09388 5.08328C2.34579 3.36108 3.81376 1.81739 5.45953 0.492658C6.06853 0.00244786 6.93158 0.00244638 7.54058 0.492659Z" fill="white"/>
+            </svg>
           </div>
         )}
       </div>
@@ -600,11 +688,14 @@ const getIdeaMetadata = async (i) => {
     functionName: "symbol",
   });
 
+  const cast = await getCastDetails(metadata.castHash);
+
   return {
     // @ts-ignore
     ...metadata,
     tokenName,
     tokenSymbol,
+    cast,
   };
 };
 
@@ -644,7 +735,7 @@ const IdeaPage = ({ id }) => {
       const endTime = Number(result.votingEndTime);
       setVotingActive(now >= startTime && now <= endTime);
     });
-  }, []);
+  }, [showBuyModal, showSubmitModal,hash]);
 
   useEffect(() => {
     if (address && idea) {
@@ -728,7 +819,7 @@ const IdeaPage = ({ id }) => {
           >
             <ArrowLeft size={16} className="mr-1" />
           </Link>
-          <ProfileCard address={address} />
+          {address ? <ProfileCard address={address} /> : <ConnectButton />}
         </div>
         <div className="container mx-auto px-4">
           {/* Back Link */}
@@ -736,35 +827,33 @@ const IdeaPage = ({ id }) => {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Idea Details */}
             <div className="lg:col-span-2">
-              <div className="bg-white rounded-xl shadow-md overflow-hidden">
+              <div className=" overflow-hidden">
                 {idea.voteToken && (
-                  <div className="w-full h-48 overflow-hidden">
-                    <iframe
-                      src={`https://www.geckoterminal.com/base/pools/${idea.voteToken}?embed=1&grayscale=0&info=0&light_chart=0&swaps=0`}
-                      title={idea.title}
-                      className="w-full h-full border-0"
-                    />
-                  </div>
+                  <>
+                    <div className="flex flex-wrap justify-between mb-4 gap-2 flex-col">
+                      <h3 className="text-xl md:text-3xl font-bold text-gray-900 mb-2 md:mb-0 flex items-center cursor-pointer" onClick={async () => await sdk.actions.openUrl(`https://www.geckoterminal.com/base/pools/${idea.voteToken}?utm_source=embed`)}>
+                        {idea.tokenName}{" "}
+                        <span className="text-gray-500 text-sm ml-2 flex items-center mt-1">
+                          ${idea.tokenSymbol}
+                        </span>
+                      </h3>
+                      <div className="flex items-center text-gray-600">
+                        <span>Balance: {userBalance.toFixed(4)}</span>
+                      </div>
+                    </div>
+
+                    <div className="w-full h-48 overflow-hidden">
+                      <iframe
+                        src={`https://www.geckoterminal.com/base/pools/${idea.voteToken}?embed=1&grayscale=0&info=0&light_chart=0&swaps=0`}
+                        title={idea.title}
+                        className="w-full h-full border-0 rounded-lg"
+                      />
+                    </div>
+                  </>
                 )}
 
-                <div className="p-6 md:p-8">
-                  <div className="flex flex-wrap justify-between items-start mb-4">
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2 md:mb-0">
-                      {idea.tokenName}
-                    </h1>
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={async () => {
-                          setShowBuyModal(true);
-                        }}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium transition-colors"
-                      >
-                        Buy ${idea.tokenSymbol}
-                      </button>
-                    </div>
-                  </div>
 
-                  <div className="flex flex-wrap gap-4 mb-6 text-sm">
+                  {/* <div className="flex flex-wrap gap-4 mb-6 text-sm">
                     <div className="flex items-center text-gray-600">
                       <User size={16} className="mr-1" />
                       Creator: {idea.creator.substring(0, 6)}...
@@ -782,12 +871,7 @@ const IdeaPage = ({ id }) => {
                         Token: {idea.tokenSymbol}
                       </span>
                     </div>
-                    <div className="flex items-center text-gray-600">
-                      <Coins size={16} className="mr-1" />
-                      <span>
-                        Balance: {userBalance.toFixed(4)} {idea.tokenSymbol}
-                      </span>
-                    </div>
+
                     <div className="flex items-center text-gray-600">
                       <Clock size={16} className="mr-1" />
                       <span className="hidden md:inline">
@@ -846,9 +930,10 @@ const IdeaPage = ({ id }) => {
                     <p className="text-gray-700 whitespace-pre-line">
                       {idea.ideaDescription}
                     </p>
-                  </div>
+                  </div> */}
+                  <WarpcastEmbed cast={idea.cast.cast} votingStartTime={idea.votingStartTime} votingEndTime={idea.votingEndTime} className="mt-2" />
 
-                  {!votingActive && (
+                  {/* {!votingActive && (
                     <div className="bg-yellow-100 text-yellow-800 p-4 rounded-lg mb-4">
                       <p>
                         Voting is{" "}
@@ -858,25 +943,29 @@ const IdeaPage = ({ id }) => {
                         .
                       </p>
                     </div>
-                  )}
-                </div>
+                  )} */}
               </div>
 
               {/* Builds Section */}
-              <div className="mt-8">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-900 whitespace-nowrap">
-                    Community Builds
-                  </h2>
+              <div className="mt-4">
+                <div className="flex gap-4 mb-4">
+                  <button
+                    onClick={() => setShowBuyModal(true)}
+                    className="flex-1 bg-white border-2 border-orange-500 text-orange-500 hover:bg-orange-50 px-4 py-2 rounded-lg font-medium transition-all whitespace-nowrap"
+                  >
+                    Buy ${idea.tokenSymbol}
+                  </button>
                   <button
                     onClick={() => setShowSubmitModal(true)}
-                    className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-4 py-2 rounded-lg font-medium transition-all whitespace-nowrap"
+                    className="flex-1 bg-orange-500 text-white hover:bg-orange-600 px-4 py-2 rounded-lg font-medium transition-all whitespace-nowrap"
                   >
                     Submit Build
                   </button>
                 </div>
 
                 {idea.builds.length > 0 ? (
+                  <>
+                  <h2 className="text-xl font-semibold mb-4 text-gray-900">Contributions</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {idea.builds.map((build, index) => (
                       <BuildCard
@@ -890,17 +979,12 @@ const IdeaPage = ({ id }) => {
                       />
                     ))}
                   </div>
+                  </>
                 ) : (
                   <div className="bg-white rounded-xl p-8 text-center">
                     <p className="text-gray-600 mb-4">
                       No builds have been submitted for this idea yet.
                     </p>
-                    <button
-                      onClick={() => setShowSubmitModal(true)}
-                      className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-6 py-3 rounded-lg font-medium inline-flex items-center transition-all"
-                    >
-                      Be the first to submit a build
-                    </button>
                   </div>
                 )}
               </div>
@@ -1029,7 +1113,7 @@ const IdeaPage = ({ id }) => {
 
         {/* Submit Build Modal */}
         <div
-          className={`fixed bottom-0 left-0 right-0 bg-white p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
+          className={`bg-gray-200 fixed bottom-0 left-0 right-0 p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
             showSubmitModal ? "translate-y-0" : "translate-y-full"
           }`}
         >
@@ -1042,13 +1126,10 @@ const IdeaPage = ({ id }) => {
             </button>
 
             <h3 className="text-xl font-semibold mb-4 text-gray-900">
-              Submit Your Build
+              Submit Build
             </h3>
 
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Devfolio Link
-              </label>
               <input
                 type="text"
                 value={buildLink}
@@ -1060,7 +1141,7 @@ const IdeaPage = ({ id }) => {
 
             <button
               onClick={handleSubmitBuild}
-              className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white py-3 rounded-lg font-medium transition-all"
+                className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition-all"
             >
               {isPending ? "Submitting..." : "Submit Build"}
             </button>
