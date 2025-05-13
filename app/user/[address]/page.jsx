@@ -9,6 +9,21 @@ import { config } from "../../../lib/providers";
 import { use } from "react";
 import sdk from "@farcaster/frame-sdk";
 import { useWriteContract } from "wagmi";
+import { getProfile } from "../../../components/IdeaPage";
+
+// Helper to fetch linked Devfolio profile for a user address
+const getDevfolioProfile = async (address) => {
+  try {
+    // You may want to replace this with your actual API endpoint or logic
+    const res = await fetch(`/api/devfolio-profile?address=${address}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Expected: { devfolioUsername: string | null }
+    return data.devfolioUsername || "Avinash";
+  } catch (err) {
+    return null;
+  }
+};
 
 const getContest = async (contestId) => {
   const contest = await readContract(config, {
@@ -99,13 +114,125 @@ const getUserProfile = async (address, isBuilds = false) => {
   return contestsWithMetadata;
 };
 
+// UserInfoBar: displays user address and devfolio profile/link
+function UserInfoBar({ address }) {
+  const [devfolioUsername, setDevfolioUsername] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [linking, setLinking] = useState(false);
+  const [farcasterUsername, setFarcasterUsername] = useState(null);
+  const [fid, setFid] = useState(null);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const profiles = await getProfile(address);
+        const addressFromProfile = Object.keys(profiles)[0];
+        if (
+          addressFromProfile &&
+          profiles[addressFromProfile] &&
+          profiles[addressFromProfile][0]
+        ) {
+            setFarcasterUsername(profiles[addressFromProfile][0].username);
+            setFid(profiles[addressFromProfile][0].fid);
+        } else {
+          setFarcasterUsername(null);
+          setFid(null);
+        }
+      } catch (e) {
+        setFarcasterUsername(null);
+        setFid(null);
+      }
+    };
+    if (address) {
+      fetchProfile();
+    } else {
+      setFarcasterUsername(null);
+      setFid(null);
+    }
+  }, [address]);
+
+  useEffect(() => {
+    let ignore = false;
+    setLoading(true);
+    getDevfolioProfile(address).then((username) => {
+      if (!ignore) {
+        setDevfolioUsername(username);
+        setLoading(false);
+      }
+    });
+    return () => { ignore = true; };
+  }, [address]);
+
+  // Simulate linking process (replace with your actual logic)
+  const handleLinkDevfolio = async () => {
+    setLinking(true);
+    // You might want to open a modal or redirect to Devfolio OAuth
+    // For now, just simulate
+    setTimeout(() => {
+      // After linking, refetch
+      setLinking(false);
+      setDevfolioUsername("your-devfolio-username"); // Replace with actual username
+    }, 1500);
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl px-6 py-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between shadow-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        <span className="font-mono text-gray-700 text-sm break-all">
+          <span className="font-semibold text-gray-900">Address:</span> {address.substring(0, 6) + "..." + address.substring(address.length - 4)}
+        </span>
+        <span className="font-mono text-gray-700 text-sm break-all">
+          <span className="font-semibold text-gray-900">Farcaster:</span>{" "}
+          <button
+            type="button"
+            className="text-blue-600 hover:underline"
+            onClick={async () => {
+              if (fid) {
+                await sdk.actions.viewProfile({ fid });
+              }
+            }}
+            disabled={!fid}
+            style={{ background: "none", border: "none", padding: 0, cursor: fid ? "pointer" : "not-allowed" }}
+          >
+            @{farcasterUsername}
+          </button>
+        </span>
+        <span className="hidden sm:inline-block mx-3 text-gray-300">|</span>
+        {/* <span className="text-sm text-gray-700 flex items-center gap-2">
+          <span className="font-semibold text-gray-900">Devfolio:</span>
+          {loading ? (
+            <span className="text-gray-400">Loading...</span>
+          ) : devfolioUsername ? (
+            <a
+              href={`https://devfolio.co/@${devfolioUsername}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline flex items-center"
+            >
+              @{devfolioUsername}
+              <ExternalLink size={14} className="ml-1" />
+            </a>
+          ) : (
+            <button
+              onClick={handleLinkDevfolio}
+              disabled={linking}
+              className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded-md text-xs font-medium transition disabled:opacity-60"
+            >
+              {linking ? "Linking..." : "Link Devfolio Profile"}
+            </button>
+          )}
+        </span> */}
+      </div>
+    </div>
+  );
+}
+
 const UserPage = ({ address }) => {
   const [contests, setContests] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("ideas");
   const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
   const { data: hash, isPending, writeContractAsync } = useWriteContract();
-
 
   useEffect(() => {
     if (hash) {
@@ -132,7 +259,6 @@ const UserPage = ({ address }) => {
     }
   };
 
-
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(Math.floor(Date.now() / 1000));
@@ -148,10 +274,6 @@ const UserPage = ({ address }) => {
   useEffect(() => {
     const fetchData = async () => {
       const data = await getUserProfile(address, activeTab === "builds");
-      console.log({
-        data,
-        activeTab,
-      });
       setContests(data);
       setIsLoading(false);
     };
@@ -178,9 +300,11 @@ const UserPage = ({ address }) => {
     return `${days}d ${hours}h ${minutes}m left`;
   };
 
-
   return (
     <div>
+      {/* User info bar above navbar */}
+      <UserInfoBar address={address} />
+
       <div className="border-b border-gray-200 mb-6">
         <nav className="-mb-px flex space-x-8">
           <button
@@ -399,6 +523,7 @@ export default function UserPageHome({ params }) {
           </Link>
           <ProfileCard address={address} />
         </div>
+
 
         <UserPage address={address} />
       </div>

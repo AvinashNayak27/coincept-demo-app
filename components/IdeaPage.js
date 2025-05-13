@@ -14,6 +14,7 @@ import { ethers } from "ethers";
 import { sendTransaction, waitForTransactionReceipt } from "@wagmi/core";
 import { getBalance } from "@wagmi/core";
 import { sdk } from "@farcaster/frame-sdk";
+import blockies from "ethereum-blockies";
 
 const getCastDetails = async (castId) => {
   const options = {
@@ -36,7 +37,7 @@ const getCastDetails = async (castId) => {
   }
 };
 
-const getProfile = async (address) => {
+export const getProfile = async (address) => {
   const options = {
     method: "GET",
     headers: {
@@ -136,21 +137,47 @@ const WarpcastEmbed = ({ cast, votingStartTime, votingEndTime }) => {
 
 export const ProfileCard = ({ address }) => {
   const [profile, setProfile] = useState(null);
+
   useEffect(() => {
     const fetchProfile = async () => {
-      const profiles = await getProfile(address);
-      const addressFromProfile = Object.keys(profiles)[0];
-
-      const profile = profiles[addressFromProfile][0];
-      console.log(profile);
-
-      setProfile(profile);
+      try {
+        const profiles = await getProfile(address);
+        const addressFromProfile = Object.keys(profiles)[0];
+        if (
+          addressFromProfile &&
+          profiles[addressFromProfile] &&
+          profiles[addressFromProfile][0]
+        ) {
+          setProfile(profiles[addressFromProfile][0]);
+        } else {
+          setProfile(null);
+        }
+      } catch (e) {
+        setProfile(null);
+      }
     };
-    fetchProfile();
+    if (address) {
+      fetchProfile();
+    } else {
+      setProfile(null);
+    }
   }, [address]);
 
-  if (!profile) {
-    return <div className="w-8 h-8 rounded-full bg-gray-200 animate-pulse" />;
+  if (!profile || !profile.display_name) {
+
+  const blockiesIcon = blockies
+  .create({ seed: address.toLowerCase() })
+  .toDataURL();
+
+    return (
+      <img
+        src={blockiesIcon}
+        className="w-8 h-8 rounded-full"
+        onClick={() => {
+          window.location.href = `/user/${address}`;
+        }}
+      />
+    );
   }
 
   return (
@@ -467,6 +494,7 @@ const getDelegate = async (address, tokenAddress) => {
     args: [address],
   });
 };
+
 const BuildCard = ({
   build,
   displayVotes,
@@ -478,25 +506,35 @@ const BuildCard = ({
   const [ogData, setOgData] = useState({});
   const { address } = useAccount();
   const [votingPower, setVotingPower] = useState(0);
-  const [showDelegationPopup, setShowDelegationPopup] = useState(false);
+  const [showVoteModal, setShowVoteModal] = useState(false);
+  const [voteStep, setVoteStep] = useState(1); // 1: check power/delegate, 2: confirm vote
+  const [isDelegating, setIsDelegating] = useState(false);
+  const [isVoting, setIsVoting] = useState(false);
+  const [hasVoted, setHasVoted] = useState(false);
+  const [username, setUsername] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentDelegate, setCurrentDelegate] = useState("");
+  const [currentVotingPower, setCurrentVotingPower] = useState(0);
+  const [delegateErrorMsg, setDelegateErrorMsg] = useState("");
+  const [voteErrorMsg, setVoteErrorMsg] = useState("");
+  const [voteSuccess, setVoteSuccess] = useState(false); // NEW: track vote success
+  const [refreshBuild, setRefreshBuild] = useState(0); // NEW: trigger build refresh
   const {
     data: delegateHash,
     isPending: delegatePending,
     writeContractAsync: delegateWriteContract,
     error: delegateError,
+    isSuccess: delegateSuccess,
   } = useWriteContract();
   const {
     data: voteHash,
     isPending: votePending,
     writeContractAsync: voteWriteContract,
     error: voteError,
+    isSuccess: voteIsSuccess,
   } = useWriteContract();
-  const [hasVoted, setHasVoted] = useState(false);
-  const [username, setUsername] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [showVotePopup, setShowVotePopup] = useState(false);
-  const [currentDelegate, setCurrentDelegate] = useState("");
-  const [currentVotingPower, setCurrentVotingPower] = useState(0);
+
+  const [userBalance, setUserBalance] = useState(0);
 
   const getUsername = async (address) => {
     const profiles = await getProfile(address);
@@ -544,46 +582,114 @@ const BuildCard = ({
     };
 
     fetchVotingPower();
-  }, [address, voteToken, delegateHash, voteHash, refresh]);
+  }, [address, voteToken, delegateHash, voteHash, refresh, refreshBuild]);
 
-  const handleVote = async () => {
+  // Split handleVote into two steps: open modal, then check power/delegate
+  const openVoteModal = async () => {
+    if (!address) {
+      alert("Please connect your wallet first");
+      return;
+    }
+    setDelegateErrorMsg("");
+    setVoteErrorMsg("");
+    setShowVoteModal(true);
+
+    // Fetch current voting power and delegate
     try {
-      if (!address) {
-        alert("Please connect your wallet first");
-        return;
-      }
-
-      // 1. Check token balance
       const balance = await getUserBalance(address, voteToken);
-      if (balance <= 0) {
-        alert("Buy tokens to vote");
-        return;
-      }
-
-      // 2. Get voting power and delegate
+      setUserBalance(balance);
       const votingPower = await getVotingPower(address, voteToken);
       const delegate = await getDelegate(address, voteToken);
-
+      console.log(votingPower, delegate);
       setCurrentVotingPower(Number(votingPower) / 1e18);
       setCurrentDelegate(delegate);
-      setShowVotePopup(true);
+      if (balance <= 0) {
+        setVoteStep(1);
+        return;
+      }
+
+      // If voting power > 0 and delegated to self, go directly to step 2
+      if (
+        Number(votingPower) / 1e18 > 0 &&
+        delegate.toLowerCase() === address.toLowerCase()
+      ) {
+        setVoteStep(2);
+      } else {
+        setVoteStep(1);
+      }
     } catch (error) {
-      console.error("Error preparing vote:", error);
+      setDelegateErrorMsg("Error fetching voting power or delegate.");
+      setVoteStep(1);
     }
   };
 
+  // Step 1: Delegate to self if needed
+  const handleDelegateToSelf = async () => {
+    setIsDelegating(true);
+    setDelegateErrorMsg("");
+    try {
+      await delegateWriteContract({
+        address: voteToken,
+        abi: erc20abi,
+        functionName: "delegate",
+        args: [address],
+      });
+      // No need for setTimeout, refetch on delegate success below
+    } catch (error) {
+      setDelegateErrorMsg("Error delegating. Please try again.");
+      setIsDelegating(false);
+    }
+  };
+
+  // Refetch voting power and delegate when delegate is successful
+  useEffect(() => {
+    const refetchVotingPowerAndDelegate = async () => {
+      if (delegateSuccess && address && voteToken) {
+        try {
+          const votingPower = await getVotingPower(address, voteToken);
+          const delegate = await getDelegate(address, voteToken);
+          console.log(votingPower, delegate);
+          setCurrentVotingPower(Number(votingPower) / 1e18);
+          setCurrentDelegate(delegate);
+          setIsDelegating(false);
+          // If voting power > 0 and delegated to self, go directly to step 2
+          if (
+            Number(votingPower) / 1e18 > 0 &&
+            delegate.toLowerCase() === address.toLowerCase()
+          ) {
+            setVoteStep(2);
+          } else {
+            setVoteStep(1);
+          }
+        } catch (error) {
+          setDelegateErrorMsg("Error fetching voting power or delegate.");
+          setIsDelegating(false);
+          setVoteStep(1);
+        }
+      }
+    };
+    refetchVotingPowerAndDelegate();
+    // Only run when delegateSuccess, address, or voteToken changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [delegateSuccess, address, voteToken]);
+
+  // Step 2: Confirm vote
   const handleVoteConfirm = async () => {
+    setIsVoting(true);
+    setVoteErrorMsg("");
     try {
       if (currentDelegate.toLowerCase() !== address.toLowerCase()) {
-        alert("You must delegate voting power to yourself to vote.");
-        setShowDelegationPopup(true);
-        setShowVotePopup(false);
+        setVoteErrorMsg("You must delegate voting power to yourself to vote.");
+        setVoteStep(1);
+        setIsVoting(false);
         return;
       }
       if (currentVotingPower <= 0) {
-        alert("You have no voting power. Delegate to yourself to vote.");
-        setShowDelegationPopup(true);
-        setShowVotePopup(false);
+        setVoteErrorMsg(
+          "You have no voting power. Delegate to yourself to vote."
+        );
+        setVoteStep(1);
+        setIsVoting(false);
         return;
       }
       await voteWriteContract({
@@ -592,15 +698,34 @@ const BuildCard = ({
         functionName: "vote",
         args: [Number(contestId), buildId],
       });
-      setShowVotePopup(false);
+      setShowVoteModal(false);
+      setIsVoting(false);
+      setVoteSuccess(true); // Set vote success to true
     } catch (error) {
-      console.error("Error voting:", error);
+      setVoteErrorMsg("Error voting. Please try again.");
+      setIsVoting(false);
     }
   };
 
+  // Show alert and refetch vote count on vote success
   useEffect(() => {
-    if (delegateError || voteError) {
-      alert("Error voting, please try again");
+    if (voteSuccess) {
+      alert("Voting success!");
+      window.location.reload();
+      // Refetch build data to update vote count
+      setRefreshBuild((prev) => prev + 1);
+      setVoteSuccess(false);
+    }
+  }, [voteSuccess]);
+
+  useEffect(() => {
+    if (delegateError) {
+      setDelegateErrorMsg("Error delegating. Please try again.");
+      setIsDelegating(false);
+    }
+    if (voteError) {
+      setVoteErrorMsg("Error voting. Please try again.");
+      setIsVoting(false);
     }
   }, [delegateError, voteError]);
 
@@ -682,7 +807,7 @@ const BuildCard = ({
 
             {displayVotes && (
               <div
-                onClick={handleVote}
+                onClick={openVoteModal}
                 className="bg-green-500 text-white text-sm font-medium px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer hover:bg-green-600"
               >
                 <span>Vote</span>
@@ -696,33 +821,104 @@ const BuildCard = ({
           {(Number(build.voteCount) / 1e18).toFixed(0)} votes
         </div>
       )}
-      {showVotePopup && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white p-6 rounded-xl shadow-lg min-w-[320px]">
-            <h2 className="text-lg font-bold mb-4">Confirm Your Vote</h2>
-            <div className="mb-2">
-              <span className="font-semibold">Your Voting Power:</span>{" "}
-              {currentVotingPower}
+
+      {/* Redesigned Vote Modal */}
+      <div
+        className={`fixed bottom-0 left-0 right-0 bg-white p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 z-50 ${
+          showVoteModal ? "translate-y-0" : "translate-y-full"
+        }`}
+        style={{ pointerEvents: showVoteModal ? "auto" : "none" }}
+      >
+        <div className="relative max-w-md mx-auto">
+          <button
+            onClick={() => setShowVoteModal(false)}
+            className="absolute top-0 right-0 text-gray-500 hover:text-gray-700"
+          >
+            <X size={24} />
+          </button>
+          <h3 className="text-xl font-semibold mb-6 text-gray-900 text-center">
+            {voteStep === 1 ? "Check Voting Power" : "Confirm Your Vote"}
+          </h3>
+          {voteStep === 1 && (
+            <div>
+              <div className="mb-4 bg-gray-50 p-4 rounded-xl">
+                <div className="mb-2">
+                  <span className="font-semibold">Your Voting Power:</span>{" "}
+                  {currentVotingPower}
+                </div>
+                <div className="mb-2">
+                  <span className="font-semibold">Delegated To:</span>{" "}
+                  <span className="break-all">
+                    {currentDelegate.toLowerCase() ===
+                    (address || "").toLowerCase()
+                      ? "self"
+                      : currentDelegate.substring(0, 6) +
+                        "..." +
+                        currentDelegate.substring(38)}
+                  </span>
+                </div>
+              </div>
+              {delegateErrorMsg && (
+                <div className="mb-2 text-red-500 text-sm">
+                  {delegateErrorMsg}
+                </div>
+              )}
+              {currentVotingPower <= 0 ||
+              currentDelegate.toLowerCase() !==
+                (address || "").toLowerCase() ? (
+                <button
+                  onClick={handleDelegateToSelf}
+                  className={`w-full py-3 rounded-lg font-medium transition-all ${
+                    userBalance <= 0
+                      ? "bg-gray-300 text-gray-400 cursor-not-allowed"
+                      : "bg-orange-500 hover:bg-orange-600 text-white"
+                  }`}
+                  disabled={isDelegating || userBalance <= 0}
+                >
+                  {isDelegating
+                    ? "Delegating..."
+                    : userBalance > 0
+                    ? "Delegate to Myself"
+                    : "Not enough tokens"}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setVoteStep(2)}
+                  className="w-full bg-green-500 hover:bg-green-600 text-white py-3 rounded-lg font-medium transition-all"
+                >
+                  Continue to Vote
+                </button>
+              )}
             </div>
-            <div className="mb-4">
-              <span className="font-semibold">Delegated To:</span>{" "}
-              <span className="break-all">{currentDelegate}</span>
+          )}
+          {voteStep === 2 && (
+            <div>
+              <div className="mb-4 bg-gray-50 p-4 rounded-xl">
+                <div className="mb-2">
+                  <span className="font-semibold">Your Voting Power:</span>{" "}
+                  {currentVotingPower}
+                </div>
+                <div className="mb-2">
+                  <span className="font-semibold">Voting To:</span>{" "}
+                  <span className="break-all">
+                    {ogData.title || `${buildId} th Build`}
+                  </span>
+                </div>
+              </div>
+              {voteErrorMsg && (
+                <div className="mb-2 text-red-500 text-sm">{voteErrorMsg}</div>
+              )}
+              <button
+                onClick={handleVoteConfirm}
+                className="w-full bg-green-500 hover:bg-green-600 text-white py-3 rounded-lg font-medium transition-all"
+                disabled={isVoting}
+              >
+                {isVoting ? "Voting..." : "Vote"}
+              </button>
             </div>
-            <button
-              onClick={handleVoteConfirm}
-              className="bg-green-500 text-white px-4 py-2 rounded-lg font-medium"
-            >
-              Vote
-            </button>
-            <button
-              onClick={() => setShowVotePopup(false)}
-              className="ml-2 text-gray-500"
-            >
-              Cancel
-            </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -1108,7 +1304,7 @@ const IdeaPage = ({ id }) => {
 
         {/* Submit Build Modal */}
         <div
-          className={`bg-gray-200 fixed bottom-0 left-0 right-0 p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
+          className={`bg-gray-100 fixed bottom-0 left-0 right-0 p-6 rounded-t-xl shadow-xl transform transition-transform duration-300 ${
             showSubmitModal ? "translate-y-0" : "translate-y-full"
           }`}
         >

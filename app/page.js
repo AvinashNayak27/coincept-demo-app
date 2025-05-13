@@ -135,7 +135,7 @@ const IdeasListPage = () => {
   }
 
   return (
-    <div className="pt-4 pb-16 bg-gray-50 min-h-screen">
+          <div className="pt-4 pb-16 bg-gradient-to-br from-orange-100 via-white to-orange-100 min-h-screen">
       <div style={{ display: "none" }}>
         <ConnectButton />
       </div>
