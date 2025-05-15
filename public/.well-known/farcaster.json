@@ -1,0 +1,18 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjEwNzU5MDksInR5cGUiOiJjdXN0b2R5Iiwia2V5IjoiMHhkRGVkQzA2NzY4OWFDNTM5NUIxNjZlQmY5QjA5NzU2NWM2MjY0OWZDIn0",
+    "payload": "eyJkb21haW4iOiJjb2luY2VwdC53b3JsZCJ9",
+    "signature": "MHhjMzFiMDY3ZGY5OGI2YjU5NzAwODMyMGRlM2I5NDk2MjdiNWE4ZjIwY2UyMDhkMWY1NGEzOTlmN2Q3MWRhMGNiMzU2NDYzYmU1ZTA2MmRlODY0ZTZmNjgxZTk0YjNmZWQ2MjhhZWVlZjA4Zjc4ZGY1ZGZjNWJkZWZkNzliNjBjNzFi"
+  },
+  "frame": {
+    "version": "1",
+    "name": "Coincept",
+    "iconUrl": "https://coincept.world/icon.png",
+    "homeUrl": "https://coincept.world",
+    "imageUrl": "https://coincept.world/coincept.png",
+    "buttonTitle": "Launch",
+    "splashImageUrl": "https://coincept.world/globe.svg",
+    "splashBackgroundColor": "#eeccff",
+    "webhookUrl": "https://api.neynar.com/f/app/bc3b043f-2924-46d0-8750-0e6c3a163cdb/event"
+  }
+}

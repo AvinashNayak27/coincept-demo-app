@@ -10,6 +10,9 @@ import { use } from "react";
 import sdk from "@farcaster/frame-sdk";
 import { useWriteContract } from "wagmi";
 import { getProfile } from "../../../components/IdeaPage";
+import { useProofStorage } from "../../../lib/proofStorage";
+import { ReclaimProofRequest } from "@reclaimprotocol/js-sdk";
+import QRCode from "react-qr-code";
 
 // Helper to fetch linked Devfolio profile for a user address
 const getDevfolioProfile = async (address) => {
@@ -114,14 +117,140 @@ const getUserProfile = async (address, isBuilds = false) => {
   return contestsWithMetadata;
 };
 
-// UserInfoBar: displays user address and devfolio profile/link
 function UserInfoBar({ address }) {
-  const [devfolioUsername, setDevfolioUsername] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [linking, setLinking] = useState(false);
   const [farcasterUsername, setFarcasterUsername] = useState(null);
   const [fid, setFid] = useState(null);
+  const [requestUrl, setRequestUrl] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [devfolioLinked, setDevfolioLinked] = useState(false);
+  const [devfolioUsername, setDevfolioUsername] = useState(null);
 
+  const { proofs, username, statusUrl, saveProofs, clearProofs, fetchProofs } =
+    useProofStorage();
+
+  // Determine device type for Reclaim SDK
+  const getDeviceType = () => {
+    if (typeof window === "undefined") return "desktop";
+    const isMobileDevice =
+      /android|linux aarch64|linux armv|iphone|ipad|ipod/i.test(
+        window.navigator.platform
+      );
+    const isAppleDevice = /mac|iphone|ipad|ipod/i.test(
+      window.navigator.platform
+    );
+    return isMobileDevice ? (isAppleDevice ? "ios" : "android") : "desktop";
+  };
+
+  // Helper: Save devfolio username to localStorage
+  const saveDevfolioToLocalStorage = (address, username) => {
+    if (typeof window === "undefined") return;
+    try {
+      const key = `devfolio:${address.toLowerCase()}`;
+      window.localStorage.setItem(key, username);
+    } catch (e) {}
+  };
+
+  // Helper: Get devfolio username from localStorage
+  const getDevfolioFromLocalStorage = (address) => {
+    if (typeof window === "undefined") return null;
+    try {
+      const key = `devfolio:${address.toLowerCase()}`;
+      return window.localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // Helper: Extract devfolio username from proofs
+  const extractDevfolioUsernameFromProofs = (proofs, fallbackUsername) => {
+    let extractedUsername = JSON.parse(proofs.claimData.parameters).paramValues
+      .username;
+
+    if (!extractedUsername && fallbackUsername) {
+      extractedUsername = fallbackUsername;
+    }
+    if (!extractedUsername) {
+      extractedUsername = "devfolio-user";
+    }
+    return extractedUsername;
+  };
+
+  // Modified verification request to store devfolio username in localStorage on success
+  const getVerificationReq = async () => {
+    setIsLoading(true);
+    try {
+      const APP_ID = "0x886e0d3B4F3DA7bE7e79A05979003030E6f4Efbc";
+      const APP_SECRET =
+        "0x25adf229b3cfd0a5fc79a7fc401a881e1ad80c95185d9bf5d00a34dd9965ef5e";
+      const PROVIDER_ID = "434b4f1f-f46b-46d8-8f69-63af765b0ddf";
+
+      const deviceType = getDeviceType();
+
+      const reclaimProofRequest = await ReclaimProofRequest.init(
+        APP_ID,
+        APP_SECRET,
+        PROVIDER_ID,
+        {
+          device: deviceType,
+          useAppClip: "desktop" !== deviceType,
+        }
+      );
+
+      // if (deviceType !== "desktop") {
+      //   reclaimProofRequest.setRedirectUrl(
+      //     "https://warpcast.com/~/frames/launch?domain=coincept.world"
+      //   );
+      // }
+
+      const url = await reclaimProofRequest.getRequestUrl();
+      setRequestUrl(url);
+
+      const statusUrl = await reclaimProofRequest.getStatusUrl();
+      saveProofs([], statusUrl);
+
+      await reclaimProofRequest.startSession({
+        onSuccess: (newProofs) => {
+          // Try to extract devfolio username from proofs
+          const extractedUsername = extractDevfolioUsernameFromProofs(
+            newProofs,
+            username
+          );
+          // Save to localStorage
+          saveDevfolioToLocalStorage(address, extractedUsername);
+          setDevfolioUsername(extractedUsername);
+          setDevfolioLinked(true);
+
+          console.log("Verification success", newProofs);
+          saveProofs(newProofs, statusUrl);
+          setIsLoading(false);
+        },
+        onError: (error) => {
+          console.error("Verification failed", error);
+          setIsLoading(false);
+        },
+      });
+    } catch (error) {
+      console.error("Error setting up verification:", error);
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyAnother = () => {
+    clearProofs();
+    setDevfolioLinked(false);
+    setDevfolioUsername(null);
+    getVerificationReq();
+  };
+
+  const isIPhoneOrAndroid = () => {
+    if (typeof window === "undefined") return false;
+    return (
+      window.navigator.platform.includes("iPhone") ||
+      window.navigator.platform.includes("Linux aarch64")
+    );
+  };
+
+  // Load devfolio username from proofs (via fetchProofs) as well as localStorage
   useEffect(() => {
     const fetchProfile = async () => {
       try {
@@ -132,8 +261,8 @@ function UserInfoBar({ address }) {
           profiles[addressFromProfile] &&
           profiles[addressFromProfile][0]
         ) {
-            setFarcasterUsername(profiles[addressFromProfile][0].username);
-            setFid(profiles[addressFromProfile][0].fid);
+          setFarcasterUsername(profiles[addressFromProfile][0].username);
+          setFid(profiles[addressFromProfile][0].fid);
         } else {
           setFarcasterUsername(null);
           setFid(null);
@@ -143,44 +272,75 @@ function UserInfoBar({ address }) {
         setFid(null);
       }
     };
+
+    const tryLoadDevfolioFromProofs = async () => {
+      // Try to load proofs from storage (if any)
+      let loadedProofs = proofs;
+      let loadedStatusUrl = statusUrl;
+      // If no proofs but there is a statusUrl, try to fetch them
+      if ((!loadedProofs || loadedProofs.length === 0) && loadedStatusUrl) {
+        try {
+          loadedProofs = await fetchProofs(loadedStatusUrl);
+        } catch (e) {
+          loadedProofs = [];
+        }
+      }
+      // Try to extract devfolio username from proofs
+      const extractedUsername = extractDevfolioUsernameFromProofs(
+        loadedProofs,
+        username
+      );
+      if (
+        loadedProofs &&
+        loadedProofs.length > 0 &&
+        extractedUsername &&
+        extractedUsername !== "devfolio-user"
+      ) {
+        saveDevfolioToLocalStorage(address, extractedUsername);
+        setDevfolioUsername(extractedUsername);
+        setDevfolioLinked(true);
+        return true;
+      }
+      return false;
+    };
+
     if (address) {
       fetchProfile();
+      // Check if devfolio username is already in localStorage
+      const storedDevfolio = getDevfolioFromLocalStorage(address);
+      if (storedDevfolio) {
+        setDevfolioUsername(storedDevfolio);
+        setDevfolioLinked(true);
+      } else {
+        // Try to load from proofs (including fetchProofs)
+        tryLoadDevfolioFromProofs().then((found) => {
+          if (!found) {
+            setDevfolioUsername(null);
+            setDevfolioLinked(false);
+            getVerificationReq(); // Start verification immediately if not linked
+          }
+        });
+      }
     } else {
       setFarcasterUsername(null);
       setFid(null);
+      setDevfolioLinked(false);
+      setDevfolioUsername(null);
+      clearProofs();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
-
-  useEffect(() => {
-    let ignore = false;
-    setLoading(true);
-    getDevfolioProfile(address).then((username) => {
-      if (!ignore) {
-        setDevfolioUsername(username);
-        setLoading(false);
-      }
-    });
-    return () => { ignore = true; };
-  }, [address]);
-
-  // Simulate linking process (replace with your actual logic)
-  const handleLinkDevfolio = async () => {
-    setLinking(true);
-    // You might want to open a modal or redirect to Devfolio OAuth
-    // For now, just simulate
-    setTimeout(() => {
-      // After linking, refetch
-      setLinking(false);
-      setDevfolioUsername("your-devfolio-username"); // Replace with actual username
-    }, 1500);
-  };
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl px-6 py-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between shadow-sm">
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <span className="font-mono text-gray-700 text-sm break-all">
-          <span className="font-semibold text-gray-900">Address:</span> {address.substring(0, 6) + "..." + address.substring(address.length - 4)}
+          <span className="font-semibold text-gray-900">Address:</span>{" "}
+          {address.substring(0, 6) +
+            "..." +
+            address.substring(address.length - 4)}
         </span>
+
         <span className="font-mono text-gray-700 text-sm break-all">
           <span className="font-semibold text-gray-900">Farcaster:</span>{" "}
           <button
@@ -189,39 +349,106 @@ function UserInfoBar({ address }) {
             onClick={async () => {
               if (fid) {
                 await sdk.actions.viewProfile({ fid });
+              } else {
+                window.open("https://warpcast.com/", "_blank");
               }
             }}
             disabled={!fid}
-            style={{ background: "none", border: "none", padding: 0, cursor: fid ? "pointer" : "not-allowed" }}
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: fid ? "pointer" : "not-allowed",
+            }}
           >
-            @{farcasterUsername}
+            {farcasterUsername ? `@${farcasterUsername}` : "Get on Farcaster"}
           </button>
         </span>
+
         <span className="hidden sm:inline-block mx-3 text-gray-300">|</span>
-        {/* <span className="text-sm text-gray-700 flex items-center gap-2">
+
+        <span className="text-sm text-gray-700 flex items-center gap-2">
           <span className="font-semibold text-gray-900">Devfolio:</span>
-          {loading ? (
-            <span className="text-gray-400">Loading...</span>
-          ) : devfolioUsername ? (
-            <a
-              href={`https://devfolio.co/@${devfolioUsername}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline flex items-center"
+          {devfolioLinked && devfolioUsername ? (
+            <button
+              className="text-blue-600 flex items-center hover:underline"
+              type="button"
+              onClick={async () => {
+                const url = `https://devfolio.co/@${devfolioUsername}`;
+                await sdk.actions.openUrl(url);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+              }}
             >
               @{devfolioUsername}
               <ExternalLink size={14} className="ml-1" />
-            </a>
-          ) : (
-            <button
-              onClick={handleLinkDevfolio}
-              disabled={linking}
-              className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded-md text-xs font-medium transition disabled:opacity-60"
-            >
-              {linking ? "Linking..." : "Link Devfolio Profile"}
             </button>
+          ) : (
+            <>
+              {isIPhoneOrAndroid() && requestUrl ? (
+                <button
+                  onClick={async () => {
+                    if (window.navigator.platform.includes("iPhone")) {
+                      window.location.href = requestUrl;
+                    } else {
+                      await sdk.actions.openUrl(requestUrl);
+                    }
+                  }}
+                  className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1 rounded-md text-xs font-medium transition disabled:opacity-60 ml-2"
+                >
+                  Link Devfolio
+                </button>
+              ) : (
+                <button
+                  onClick={getVerificationReq}
+                  disabled={isLoading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-md text-xs font-medium transition duration-200 flex items-center justify-center ml-2"
+                >
+                  {isLoading ? (
+                    <span className="animate-pulse">Processing...</span>
+                  ) : (
+                    "Link Devfolio"
+                  )}
+                </button>
+              )}
+              {/* Show QR code below if not mobile and requestUrl exists */}
+              {!isIPhoneOrAndroid() && requestUrl && (
+                <div className="flex flex-col items-center space-y-2 ml-4">
+                  <div className="p-2 bg-white rounded-lg shadow-inner">
+                    <QRCode value={requestUrl} size={120} />
+                  </div>
+                  <p className="text-xs text-gray-600 text-center">
+                    Scan to link your Devfolio profile
+                  </p>
+                </div>
+              )}
+            </>
           )}
-        </span> */}
+        </span>
+        {/* 
+        {proofs && (
+          <div className="mt-8 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <h2 className="text-xl font-semibold text-green-700 mb-2">Verification Successful!</h2>
+            <div className="bg-white p-3 rounded overflow-auto max-h-60">
+              <pre className="text-xs text-gray-700">{JSON.stringify(proofs, null, 2)}</pre>
+            </div>
+            {username && (
+              <div className="mt-4 flex items-center justify-between">
+                <span className="text-gray-700">Username: {username}</span>
+                <button
+                  onClick={handleVerifyAnother}
+                  className="text-red-500 hover:text-red-700"
+                >
+                  Verify Another
+                </button>
+              </div>
+            )}
+          </div>
+        )} */}
       </div>
     </div>
   );
@@ -292,11 +519,11 @@ const UserPage = ({ address }) => {
     const endTime = Number(endTimeBigInt);
     const timeLeft = endTime - currentTime;
     if (timeLeft <= 0) return "Voting ended";
-    
+
     const days = Math.floor(timeLeft / 86400);
     const hours = Math.floor((timeLeft % 86400) / 3600);
     const minutes = Math.floor((timeLeft % 3600) / 60);
-    
+
     return `${days}d ${hours}h ${minutes}m left`;
   };
 
@@ -340,7 +567,11 @@ const UserPage = ({ address }) => {
             {contests.map((contest, index) => (
               <Link href={`/idea/${contest.id}`} key={index}>
                 <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">
-                  <h3 className="text-xl font-semibold mb-2">{contest.fees.token0name === "Wrapped Ether" ? contest.fees.token1name : contest.fees.token0name}</h3>
+                  <h3 className="text-xl font-semibold mb-2">
+                    {contest.fees.token0name === "Wrapped Ether"
+                      ? contest.fees.token1name
+                      : contest.fees.token0name}
+                  </h3>
                   <p className="text-gray-800 text-base mb-4">
                     {contest.ideaDescription}
                   </p>
@@ -374,24 +605,34 @@ const UserPage = ({ address }) => {
                           onClick={async (e) => {
                             e.preventDefault();
                             if (currentTime <= contest.votingEndTime) {
-                              alert(`Voting still active. Please wait ${formatTimeLeft(contest.votingEndTime)}`);
+                              alert(
+                                `Voting still active. Please wait ${formatTimeLeft(
+                                  contest.votingEndTime
+                                )}`
+                              );
                             } else {
                               await handleClaimFees(contest.id);
                             }
                           }}
                           disabled={isPending}
                           className={`w-full sm:w-auto ${
-                            currentTime <= contest.votingEndTime 
+                            currentTime <= contest.votingEndTime
                               ? "bg-gray-400 cursor-not-allowed"
                               : "bg-orange-600 hover:bg-orange-700"
                           } text-white px-5 py-2.5 rounded-lg text-sm font-medium transition`}
                         >
-                          {currentTime <= contest.votingEndTime ? "Voting Active" : isPending ? "Claiming..." : "Claim Fees"}
+                          {currentTime <= contest.votingEndTime
+                            ? "Voting Active"
+                            : isPending
+                            ? "Claiming..."
+                            : "Claim Fees"}
                         </button>
                       </>
                     ) : (
                       <div className="w-full text-sm text-gray-500 border border-gray-300 bg-white rounded-md p-3 text-center italic">
-                        {currentTime <= contest.votingEndTime ? "Fees not available yet" : "No fees generated"}
+                        {currentTime <= contest.votingEndTime
+                          ? "Fees not available yet"
+                          : "No fees generated"}
                       </div>
                     )}
                   </div>
@@ -432,7 +673,9 @@ const UserPage = ({ address }) => {
                 )}
                 <div className="flex justify-between items-center">
                   <button
-                    onClick={async () => await sdk.actions.openUrl(contest.build.buildLink)}
+                    onClick={async () =>
+                      await sdk.actions.openUrl(contest.build.buildLink)
+                    }
                     className="inline-flex items-center text-orange-600 hover:text-orange-800 font-medium text-sm"
                   >
                     View Build <ExternalLink size={14} className="ml-1" />
@@ -446,7 +689,8 @@ const UserPage = ({ address }) => {
                   </Link>
 
                   <p className="text-sm text-gray-500">
-                    {(Number(contest.build?.voteCount || 0n) / 1e18).toFixed(5)} votes
+                    {(Number(contest.build?.voteCount || 0n) / 1e18).toFixed(5)}{" "}
+                    votes
                   </p>
                 </div>
               </div>
@@ -479,18 +723,24 @@ const UserPage = ({ address }) => {
                       onClick={async (e) => {
                         e.preventDefault();
                         if (currentTime <= contest.votingEndTime) {
-                          alert(`Voting still active. Please wait ${formatTimeLeft(contest.votingEndTime)}`);
+                          alert(
+                            `Voting still active. Please wait ${formatTimeLeft(
+                              contest.votingEndTime
+                            )}`
+                          );
                         } else {
                           await handleClaimFees(contest.id);
                         }
                       }}
                       className={`w-full sm:w-auto ${
-                        currentTime <= contest.votingEndTime 
+                        currentTime <= contest.votingEndTime
                           ? "bg-gray-400 cursor-not-allowed"
                           : "bg-orange-600 hover:bg-orange-700"
                       } text-white px-5 py-2.5 rounded-lg text-sm font-medium transition`}
                     >
-                      {currentTime <= contest.votingEndTime ? "Voting Active" : "Claim Fees"}
+                      {currentTime <= contest.votingEndTime
+                        ? "Voting Active"
+                        : "Claim Fees"}
                     </button>
                   </>
                 ) : (
@@ -523,7 +773,6 @@ export default function UserPageHome({ params }) {
           </Link>
           <ProfileCard address={address} />
         </div>
-
 
         <UserPage address={address} />
       </div>

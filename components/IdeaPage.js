@@ -164,10 +164,18 @@ export const ProfileCard = ({ address }) => {
   }, [address]);
 
   if (!profile || !profile.display_name) {
+    // Avoid ReferenceError: document is not defined (SSR)
+    if (typeof window === "undefined") {
+      // On server, render a placeholder (e.g. empty avatar)
+      return (
+        <div
+          className="w-8 h-8 rounded-full bg-gray-200"
+          style={{ display: "inline-block" }}
+        />
+      );
+    }
 
-  const blockiesIcon = blockies
-  .create({ seed: address.toLowerCase() })
-  .toDataURL();
+    const blockiesIcon = blockies.create({ seed: address.toLowerCase() }).toDataURL();
 
     return (
       <img
@@ -974,6 +982,25 @@ const IdeaPage = ({ id }) => {
   const [swapping, setSwapping] = useState(false);
   const [swappingHash, setSwappingHash] = useState(null);
 
+  const [projects, setProjects] = useState([]);
+
+  useEffect(() => {
+    const devfolioUsername = localStorage.getItem(`devfolio:${address?.toLowerCase()}`);
+    const fetchProjects = async () => {
+      if (devfolioUsername) {
+        try {
+          const res = await fetch(`/api/devfolio/${devfolioUsername}?page=1&limit=5`);
+          const data = await res.json();
+          setProjects(data.result || []);
+        } catch (error) {
+          console.error("Error fetching projects:", error);
+        }
+      }
+    };
+
+    fetchProjects();
+  }, [showSubmitModal,address]);
+
   useEffect(() => {
     const init = async () => {
       await sdk.actions.ready();
@@ -1010,15 +1037,15 @@ const IdeaPage = ({ id }) => {
     }
   }, [showBuyModal]);
 
-  const handleSubmitBuild = async () => {
+  const handleSubmitBuild = async (link) => {
     try {
-      console.log("Submitting build link:", buildLink);
+      console.log("Submitting build link:", link);
 
       writeContract({
         address: coincept_address,
         abi: coincept_abi,
         functionName: "submitBuild",
-        args: [Number(id), buildLink],
+        args: [Number(id), link],
       });
     } catch (error) {
       console.error("Error validating URL:", error);
@@ -1320,26 +1347,68 @@ const IdeaPage = ({ id }) => {
               Submit Build
             </h3>
 
-            <div className="mb-4">
-              <input
-                type="text"
-                value={buildLink}
-                onChange={(e) => setBuildLink(e.target.value)}
-                placeholder="Enter your Devfolio link"
-                className="w-full border border-gray-300 rounded-lg px-4 py-2 bg-transparent text-gray-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-
-            <button
-              onClick={handleSubmitBuild}
-              className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-lg font-medium transition-all"
-            >
-              {isPending ? "Submitting..." : "Submit Build"}
-            </button>
-            {hash && (
-              <div className="mt-4 text-sm text-green-600 ">
-                Build submitted successfully!
+            {/* Check if voting period has ended */}
+            {idea && Number(idea.votingEndTime) < Math.floor(Date.now() / 1000) ? (
+              <div className="mb-4 text-gray-600 font-semibold">
+                Voting closed. Not accepting builds.
               </div>
+            ) : (
+              <>
+                {projects.length > 0 ? (
+                  <div className="mt-6">
+                    <div className="space-y-4">
+                      {projects.map((project, index) => (
+                        <div key={index} className="bg-white p-4 rounded-lg shadow">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h4 className="font-medium text-gray-900 flex items-center">
+                                {project.project.name}
+                              </h4>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                await handleSubmitBuild(`https://devfolio.co/projects/${project.project.slug}`);
+                              }}
+                              className="bg-orange-500 hover:bg-orange-600 text-white rounded-full p-1.5 transition-colors flex items-center justify-center"
+                              title="Submit this project"
+                              style={{ height: '32px', width: '32px' }}
+                            >
+                              <span className="sr-only">Submit this project</span>
+                              <svg
+                                width="18"
+                                height="18"
+                                fill="none"
+                                viewBox="0 0 20 20"
+                                className="inline-block align-middle"
+                              >
+                                <circle cx="10" cy="10" r="10" fill="currentColor" opacity="0.15"/>
+                                <path d="M10 5v10M5 10h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                              </svg>
+                            </button>
+                          </div>
+                          <p className="text-sm text-gray-600 mt-1">{project.project.tagline}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  localStorage.getItem(`devfolio:${address?.toLowerCase()}`) ? (
+                    <div className="mb-4 text-gray-600">
+                      No Devfolio projects found.
+                    </div>
+                  ) : (
+                    <div className="mb-4 text-gray-600">
+                      Please link your Devfolio account in your <a href={`/user/${address}`} className="text-orange-500 underline">profile page</a> to submit a build.
+                    </div>
+                  )
+                )}
+
+                {hash && (
+                  <div className="mt-4 text-sm text-green-600 ">
+                    Build submitted successfully!
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
